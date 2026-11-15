@@ -1,0 +1,6 @@
+{
+  "src": "/path/to/your/repo",
+  "exclude": [".claude/", ".codex-home/", "data/", "runs/"],
+  "project": "PROJECT.md",
+  "agy": "agy"
+}

@@ -1,0 +1,15 @@
+# local config (copy agora.example.json)
+agora.json
+PROJECT.md
+# credentials and runtime state
+.codex-home/
+.venv/
+__pycache__/
+code/
+code.new/
+code.old/
+state/
+work/
+thread.jsonl
+thread.md
+*.tmp
