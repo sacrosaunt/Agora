@@ -14,6 +14,8 @@ AGORA_EXCLUDE (comma-separated):  {"src": "/path/to/repo", "exclude": ["data/", 
   claude   Claude Code CLI binary (default: claude on PATH, else ~/.local/bin/claude)
   serve    agents the serve loop runs headlessly (default: all three; drop one whose seat a person runs)
   max_turns, max_tokens   session rotation limits (defaults 40 turns, 300000 context tokens)
+  claude_model, claude_effort, codex_model, codex_effort, hydrogen_model   per-agent model and reasoning effort
+           (default: each CLI's own default; codex effort medium); env AGORA_CLAUDE_MODEL etc. override
 
 Each headless agent keeps one persistent CLI session (codex thread / Antigravity conversation / Claude Code
 session, all on the local logins, no API keys) and is resumed with only the messages it hasn't seen. A fresh
@@ -423,24 +425,30 @@ def snapshot_head():
         return "", ""
 
 
+def opt(name, key, default=None):
+    """Per-agent setting: env AGORA_<NAME>_<KEY>, else "<name>_<key>" in agora.json, else default."""
+    return os.environ.get(f"AGORA_{name.upper()}_{key.upper()}") or CFG.get(f"{name}_{key}") or default
+
+
 def agent_cmd(name, sid, work, out):
     """The CLI command for one turn of name: fresh when sid is None, else resuming session sid.
     Returns (cmd, prompt_on_stdin)."""
     if name == "codex":  # codex exec resume has no -C: the cwd (work) is the workspace either way
         base = ["codex", "exec"] + (["resume"] if sid else []) + ["--json", "--skip-git-repo-check"]
         return base + ([] if sid else ["-C", work]) + [
-            "-c", "model_reasoning_effort=" + os.environ.get("AGORA_CODEX_EFFORT", "medium"),
+            "-c", "model_reasoning_effort=" + opt("codex", "effort", "medium")] + (
+            ["-c", "model=" + json.dumps(opt("codex", "model"))] if opt("codex", "model") else []) + [
             "-o", out] + ([sid] if sid else []) + ["-"], True
     if name == "hydrogen":  # Antigravity print mode: workspace = code snapshot + work dir; approvals auto-denied
-        return [AGY, "--model", os.environ.get("AGORA_HYDROGEN_MODEL", "gemini-4-hydrogen-high"),
+        return [AGY, "--model", opt("hydrogen", "model", "gemini-4-hydrogen-high"),
                 "--add-dir", CODE, "--output-format", "stream-json"] + (["--conversation", sid] if sid else []), False
     # claude: Claude Code print mode on the local login, read-only tools; no user settings/hooks, MCP servers or
     # skills (they cost ~150k context tokens per turn); prompt on stdin
     cmd = [CLAUDE, "-p", "--output-format", "stream-json", "--verbose", "--setting-sources", "project,local",
            "--strict-mcp-config", "--disable-slash-commands", "--add-dir", CODE, "--tools", "Read", "Grep", "Glob"]
-    for flag, env in (("--model", "AGORA_CLAUDE_MODEL"), ("--effort", "AGORA_CLAUDE_EFFORT")):
-        if os.environ.get(env) or CFG.get(env[6:].lower()):
-            cmd += [flag, os.environ.get(env) or CFG[env[6:].lower()]]
+    for key in ("model", "effort"):
+        if opt("claude", key):
+            cmd += ["--" + key, opt("claude", key)]
     return cmd + (["--resume", sid] if sid else []), True
 
 

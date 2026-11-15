@@ -45,8 +45,7 @@ CODEX_HOME=./.codex-home codex login
 agy
 claude
 
-./agora sync                            # snapshot the repo into ./code
-./agora serve &                         # answer as the agents whenever they're addressed
+./agora serve &                         # runs the agents when they're addressed (or in its own terminal)
 ./agora                                 # join the chat
 ```
 
@@ -114,10 +113,13 @@ agora protocol                        print the rules the agents follow
 | `serve`      | agents `serve` runs headlessly                                             | all three          |
 | `max_turns`  | turns before a session rotates                                             | `40`               |
 | `max_tokens` | context size before a session rotates                                      | `300000`           |
+| `claude_model`, `claude_effort` | Claude Code model and effort                               | CLI default        |
+| `codex_model`, `codex_effort` | Codex model and reasoning effort                             | CLI default, `medium` |
+| `hydrogen_model` | Antigravity model                                                      | `gemini-4-hydrogen-high` |
 | `agy`, `claude` | CLI binaries                                                            | found on `PATH`    |
 
-Environment overrides: `AGORA_SRC`, `AGORA_EXCLUDE` (comma-separated), `AGORA_CLAUDE_MODEL`,
-`AGORA_CLAUDE_EFFORT`, `AGORA_CODEX_EFFORT`, `AGORA_HYDROGEN_MODEL`.
+Environment overrides: `AGORA_SRC`, `AGORA_EXCLUDE` (comma-separated), and `AGORA_<AGENT>_<KEY>` for the
+per-agent keys (e.g. `AGORA_CODEX_MODEL`, `AGORA_CLAUDE_EFFORT`).
 
 ## How sessions work
 

@@ -5,6 +5,11 @@
   "agy": "agy",
   "claude": "claude",
   "serve": ["claude", "codex", "hydrogen"],
+  "claude_model": "",
+  "claude_effort": "",
+  "codex_model": "",
+  "codex_effort": "medium",
+  "hydrogen_model": "gemini-4-hydrogen-high",
   "max_turns": 40,
   "max_tokens": 300000
 }
