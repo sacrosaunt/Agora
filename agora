@@ -740,7 +740,7 @@ def chat(to="all", after=None):
     tty = sys.stdout.isatty()
     col = (lambda c, t: f"\033[{c}m{t}\033[0m") if tty else (lambda c, t: t)
     state = {"to": to, "last": after if after is not None else (load()[-1]["id"] if load() else 0),
-             "busy": {}, "stop": False, "mine": set(), "shown": False, "frame": 0, "live": False}
+             "busy": {}, "stop": False, "mine": set(), "shown": False, "frame": 0, "reading": False}
     lock = threading.Lock()
 
     def prompt():
@@ -786,7 +786,7 @@ def chat(to="all", after=None):
             state["shown"] = has_line()
             if state["shown"]:
                 out += typing_line() + "\n"
-            sys.stdout.write(out + (prompt() + buf if state["live"] else ""))  # input() draws the first prompt
+            sys.stdout.write(out + (prompt() + buf if state["reading"] else ""))  # else input() draws it
             sys.stdout.flush()
 
     def animate():
@@ -802,10 +802,10 @@ def chat(to="all", after=None):
                         continue
                     sys.stdout.write("\0337\033[1A\r\033[K" + line + "\0338")
                 elif line is not None:
-                    sys.stdout.write("\r\033[K" + typing_line() + "\n" + prompt() + readline.get_line_buffer())
+                    sys.stdout.write("\r\033[K" + typing_line() + "\n" + (prompt() + readline.get_line_buffer() if state["reading"] else ""))
                     state["shown"] = True
                 elif state["shown"]:
-                    sys.stdout.write("\r\033[K\033[1A\r\033[K" + prompt() + readline.get_line_buffer())
+                    sys.stdout.write("\r\033[K\033[1A\r\033[K" + (prompt() + readline.get_line_buffer() if state["reading"] else ""))
                     state["shown"] = False
                 else:
                     continue
@@ -871,18 +871,24 @@ def chat(to="all", after=None):
         after = None
     threading.Thread(target=follow, daemon=True).start()
     threading.Thread(target=animate, daemon=True).start()
-    state["live"] = True
+    def reading():  # readline has drawn its prompt and waits for keys: from now on redraws must redraw the prompt
+        with lock:
+            state["reading"] = True
+    readline.set_pre_input_hook(reading)
     while True:
         try:
             pr = prompt()
             line = input(pr)
         except (EOFError, KeyboardInterrupt):
             with lock:
+                state["reading"] = False
                 if state["shown"] and tty:
                     sys.stdout.write("\r\033[K\033[1A\r\033[K")
                 state["stop"] = True
             print()
             break
+        with lock:
+            state["reading"] = False   # until the next input() draws its own prompt
         cols = shutil.get_terminal_size().columns
         vis = len(f"[to {state['to']}] > ") + len(line)
         echo_rows = max(1, -(-vis // cols))   # screen rows your typed line occupies (it gets replaced once posted)
