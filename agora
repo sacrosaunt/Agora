@@ -887,7 +887,8 @@ def chat(to="all", after=None):
                     if m["id"] not in state["mine"]:  # your own lines are already on screen
                         show(m)
             state["busy"] = busy_now()
-            zz = {n: tuple((asleep(n) or {}).get("from") or ()) for n in AGENTS if asleep(n)}  # who sleeps, and on whom
+            zz = {n: tuple((asleep(n) or {}).get("from") or ()) for n in AGENTS
+                  if asleep(n) and n not in state["busy"]}  # who sleeps, and on whom (a woken agent at work is awake)
             if zz != state.setdefault("zz", zz):
                 if not tty:   # in a terminal the status line above the prompt shows this in place
                     woke = sorted(set(state["zz"]) - set(zz))
