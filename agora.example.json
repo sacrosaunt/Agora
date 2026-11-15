@@ -2,5 +2,9 @@
   "src": "/path/to/your/repo",
   "exclude": [".claude/", ".codex-home/", "data/", "runs/"],
   "project": "PROJECT.md",
-  "agy": "agy"
+  "agy": "agy",
+  "claude": "claude",
+  "serve": ["claude", "codex", "hydrogen"],
+  "max_turns": 40,
+  "max_tokens": 300000
 }

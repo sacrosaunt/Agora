@@ -11,6 +11,14 @@ AGORA_EXCLUDE (comma-separated):  {"src": "/path/to/repo", "exclude": ["data/", 
            always left out
   project  markdown file with project notes appended to the protocol (default PROJECT.md here)
   agy      Antigravity CLI binary (default: agy on PATH)
+  claude   Claude Code CLI binary (default: claude on PATH, else ~/.local/bin/claude)
+  serve    agents the serve loop runs headlessly (default: all three; drop one whose seat a person runs)
+  max_turns, max_tokens   session rotation limits (defaults 40 turns, 300000 context tokens)
+
+Each headless agent keeps one persistent CLI session (codex thread / Antigravity conversation / Claude Code
+session, all on the local logins, no API keys) and is resumed with only the messages it hasn't seen. A fresh
+session (full protocol + thread) starts deterministically when there is none, after max_turns turns, past
+max_tokens of context, when the protocol or project notes change, after a failed turn, or on `agora reset`.
 
   agora post -a NAME [-t to1,to2|all] [TEXT... | -f FILE | - (stdin)]
                                          as user in a terminal: posts, then opens the live chat (-q: don't)
@@ -22,8 +30,9 @@ AGORA_EXCLUDE (comma-separated):  {"src": "/path/to/repo", "exclude": ["data/", 
                                          several concurrent actions); wait sets it, posting clears it
   agora idle -a NAME                     clear NAME's activity
   agora sync                             refresh ./code from the configured src (tracked + untracked-not-ignored files)
-  agora codex | hydrogen                   run that agent once on the thread and post its reply
-  agora serve [--budget N] [--only X]    loop: answer as codex/hydrogen whenever a message is addressed to them
+  agora claude | codex | hydrogen        run that agent once on the thread and post its reply
+  agora serve [--budget N] [--only X]    loop: answer as the serve agents whenever a message is addressed to them
+  agora reset [NAME|all]                 drop agent sessions: their next turn starts fresh
   agora status
   agora protocol                         print the protocol (PROTOCOL.md + the project notes) with real paths
   agora intro hydrogen                   print the starter prompt for a manually run hydrogen (HYDROGEN.md)
@@ -41,10 +50,12 @@ AGENTS = ("claude", "codex", "hydrogen")
 
 
 def load_config():
+    global CFG
     cfg = {}
     if os.path.exists(CONFIG):
         with open(CONFIG) as f:
             cfg = json.load(f)
+    CFG = cfg
     src = os.environ.get("AGORA_SRC") or cfg.get("src")
     ex = os.environ.get("AGORA_EXCLUDE")
     ex = [x.strip() for x in ex.split(",")] if ex is not None else cfg.get("exclude", [])
@@ -54,6 +65,9 @@ def load_config():
 
 
 SRC, EXCLUDE, PROJECT, AGY = load_config()
+CLAUDE = os.path.expanduser(os.environ.get("AGORA_CLAUDE") or CFG.get("claude") or shutil.which("claude")
+                            or "~/.local/bin/claude")
+MAX_TURNS, MAX_TOKENS = int(CFG.get("max_turns", 40)), int(CFG.get("max_tokens", 300_000))
 
 
 def winpath(path):
@@ -215,11 +229,23 @@ def fmt(m):
 
 
 def sync():
+    """Refresh ./code from SRC (serialized: concurrent one-shot runs would race on the directory swap)."""
     if not SRC or not os.path.isdir(SRC):
         sys.exit(f"agora: no source repo configured (got {SRC!r}); set \"src\" in {CONFIG} or AGORA_SRC")
+    os.makedirs(STATE, exist_ok=True)
+    with open(os.path.join(STATE, "sync.lock"), "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        return _sync()
+
+
+def _sync():
     files = subprocess.run(["git", "-C", SRC, "ls-files", "-z", "-co", "--exclude-standard"],
                            capture_output=True, check=True).stdout.decode().split("\0")
     files = [f for f in files if f and not f.startswith(EXCLUDE) and os.path.isfile(os.path.join(SRC, f))]
+    dig = __import__("hashlib").sha1()
+    for f in files:
+        st = os.stat(os.path.join(SRC, f))
+        dig.update(f"{f}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
     new = os.path.join(HOME, "code.new")
     shutil.rmtree(new, ignore_errors=True)
     for f in files:
@@ -236,13 +262,52 @@ def sync():
         os.rename(CODE, old)
     os.rename(new, CODE)
     shutil.rmtree(old, ignore_errors=True)
+    with open(os.path.join(STATE, "snapshot.json"), "w") as fh:  # content digest: sessions note real changes only
+        json.dump({"digest": dig.hexdigest()[:12], "head": head.strip()}, fh)
     return len(files)
 
 
-AUTO = ("codex", "hydrogen")  # agents the serve loop runs headlessly
+AUTO = tuple(CFG.get("serve") or AGENTS)  # agents the serve loop runs headlessly
+SESS = os.path.join(STATE, "sessions")  # <name>.json: the agent's persistent CLI session
 
 
-def codex_event(name, e):
+def session(name, val=None, drop=False):
+    """Read (default), write (val) or drop an agent's session record."""
+    f = os.path.join(SESS, name + ".json")
+    if drop:
+        if os.path.exists(f):
+            os.unlink(f)
+        return None
+    if val is not None:
+        os.makedirs(SESS, exist_ok=True)
+        with open(f + ".tmp", "w") as g:
+            json.dump(val, g)
+        os.replace(f + ".tmp", f)
+        return val
+    try:
+        return json.load(open(f))
+    except (OSError, ValueError):
+        return None
+
+
+def stale(name, s, phash):
+    """Why session s must be replaced by a fresh one (None: resume it)."""
+    if not s or not s.get("id"):
+        return "no session"
+    if s.get("turns", 0) >= MAX_TURNS:
+        return f"{s['turns']} turns"
+    if s.get("tokens", 0) >= MAX_TOKENS:
+        return f"{s['tokens']} tokens"
+    if s.get("proto") != phash:
+        return "protocol changed"
+    return None
+
+
+def codex_event(name, e, res):
+    if e.get("type") == "thread.started":
+        res["sid"] = e.get("thread_id")
+    elif e.get("type") == "turn.completed":
+        res["tokens"] = (e.get("usage") or {}).get("input_tokens", 0)
     it = e.get("item") or {}
     typ, key = it.get("type"), it.get("id")
     if e.get("type") == "item.started":
@@ -263,8 +328,12 @@ def codex_event(name, e):
 
 
 def agy_event(name, e, res):
+    if e.get("conversation_id"):
+        res["sid"] = e["conversation_id"]
     if e.get("event") == "result":
-        res["text"] = (e.get("result") or {}).get("response", "")
+        r = e.get("result") or {}
+        res["text"], res["sid"] = r.get("response", ""), r.get("conversation_id") or res.get("sid")
+        res["tokens"] = (r.get("usage") or {}).get("input_tokens", 0)
         return
     su = e.get("step_update") or {}
     key, st = su.get("step_index"), su.get("state")
@@ -308,8 +377,68 @@ def stream(name, cmd, stdin_text, cwd, env, log, timeout, on_event):
     return p
 
 
+def rules(name):
+    return ("Output ONLY your message text "
+            "(no preamble). Optionally make the first line `TO: name1,name2` (default: the author of the "
+            "latest message). If you have nothing worth adding, output only `SLEEP`: nothing is posted and you "
+            "stop answering messages to all until someone pings you (`@" + name + "` or addresses you by name). "
+            "A first line `SLEEP` before a message posts it and then sleeps. To hold off until a specific "
+            "participant has replied (e.g. you asked codex to check something), use a first line `WAIT: codex` "
+            "(with or without a message after it): you skip everything until codex posts, then get a turn. "
+            "Sleeping is automatic too: after a message addressed only to other agents you wait for their answer; "
+            "a ping or the user writing to all wakes you. Questions to all are answered by one agent first; if "
+            "another agent has already answered what you were asked, reply only with a correction or something "
+            "new, otherwise output only `SLEEP`.\n\n"
+            "LENGTH (rule 3, strictly): answer in 1-5 short lines, under ~600 characters. A one-line question "
+            "gets a short answer. Go longer only if the user explicitly asked for an audit, report or design, "
+            "and then still lead with a one-line summary. Cut background, recaps and anything already said in "
+            "the thread.\n")
+
+
+def snapshot_head():
+    """(content digest, HEAD line) of the current code snapshot."""
+    try:
+        d = json.load(open(os.path.join(STATE, "snapshot.json")))
+        return d["digest"], d["head"]
+    except (OSError, ValueError, KeyError):
+        return "", ""
+
+
+def agent_cmd(name, sid, work, out):
+    """The CLI command for one turn of name: fresh when sid is None, else resuming session sid.
+    Returns (cmd, prompt_on_stdin)."""
+    if name == "codex":  # codex exec resume has no -C: the cwd (work) is the workspace either way
+        base = ["codex", "exec"] + (["resume"] if sid else []) + ["--json", "--skip-git-repo-check"]
+        return base + ([] if sid else ["-C", work]) + [
+            "-c", "model_reasoning_effort=" + os.environ.get("AGORA_CODEX_EFFORT", "medium"),
+            "-o", out] + ([sid] if sid else []) + ["-"], True
+    if name == "hydrogen":  # Antigravity print mode: workspace = code snapshot + work dir; approvals auto-denied
+        return [AGY, "--model", os.environ.get("AGORA_HYDROGEN_MODEL", "gemini-4-hydrogen-high"),
+                "--add-dir", CODE, "--output-format", "stream-json"] + (["--conversation", sid] if sid else []), False
+    # claude: Claude Code print mode on the local login, read-only tools; no user settings/hooks, MCP servers or
+    # skills (they cost ~150k context tokens per turn); prompt on stdin
+    cmd = [CLAUDE, "-p", "--output-format", "stream-json", "--verbose", "--setting-sources", "project,local",
+           "--strict-mcp-config", "--disable-slash-commands", "--add-dir", CODE, "--tools", "Read", "Grep", "Glob"]
+    for flag, env in (("--model", "AGORA_CLAUDE_MODEL"), ("--effort", "AGORA_CLAUDE_EFFORT")):
+        if os.environ.get(env) or CFG.get(env[6:].lower()):
+            cmd += [flag, os.environ.get(env) or CFG[env[6:].lower()]]
+    return cmd + (["--resume", sid] if sid else []), True
+
+
+def agent_env(name):
+    """Local CLI logins only: drop API keys (they would switch the CLIs to API billing) and, for claude, the
+    variables that tie a nested Claude Code to the session that started agora."""
+    drop = {"OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY"}
+    env = {k: v for k, v in os.environ.items()
+           if k not in drop and not (name == "claude" and (k.startswith("CLAUDE_CODE_") or k in ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT")))}
+    if name == "codex":
+        env["CODEX_HOME"] = os.path.join(HOME, ".codex-home")
+    return env
+
+
 def run_agent(name, timeout=1800, do_sync=True):
-    """Run one headless turn of an auto agent (codex or hydrogen) on the thread and post its reply."""
+    """Run one headless turn of an agent on the thread and post its reply. Resumes the agent's persistent
+    session with just the unseen messages, or starts a fresh one (see stale())."""
     if do_sync:
         sync()
     msgs = load()
@@ -321,45 +450,50 @@ def run_agent(name, timeout=1800, do_sync=True):
     os.makedirs(work, exist_ok=True)
     with open(os.path.join(work, "THREAD.md"), "w") as f:
         f.write("# Thread so far\n\n" + thread)
-    prompt = (protocol() +
-              f"\n\n# You are: {name}\n\nThe codebase is at {CODE} (read-only). The full thread is in "
-              f"{work}/THREAD.md: read it first. Reply to the new message(s) addressed to you: {new}. "
-              "Only read files under the codebase and that thread file. Output ONLY your message text "
-              "(no preamble). Optionally make the first line `TO: name1,name2` (default: the author of the "
-              "latest message). If you have nothing worth adding, output only `SLEEP`: nothing is posted and you "
-              "stop answering messages to all until someone pings you (`@" + name + "` or addresses you by name). "
-              "A first line `SLEEP` before a message posts it and then sleeps. To hold off until a specific "
-              "participant has replied (e.g. you asked codex to check something), use a first line `WAIT: codex` "
-              "(with or without a message after it): you skip everything until codex posts, then get a turn. "
-              "Sleeping is automatic too: after a message addressed only to other agents you wait for their answer; "
-              "a ping or the user writing to all wakes you. Questions to all are answered by one agent first; if "
-              "another agent has already answered what you were asked, reply only with a correction or something "
-              "new, otherwise output only `SLEEP`.\n\n"
-              "LENGTH (rule 3, strictly): answer in 1-5 short lines, under ~600 characters. A one-line question "
-              "gets a short answer. Go longer only if the user explicitly asked for an audit, report or design, "
-              "and then still lead with a one-line summary. Cut background, recaps and anything already said in "
-              "the thread.\n")
-    env = {k: v for k, v in os.environ.items() if k not in ("OPENAI_API_KEY", "CODEX_API_KEY")}
+    proto = protocol()
+    phash = __import__("hashlib").sha1((proto + rules(name)).encode()).hexdigest()[:12]
+    head, head_line = snapshot_head()
+    fresh_prompt = (proto + f"\n\n# You are: {name}\n\nThe codebase is at {CODE} (read-only). The full thread is in "
+                    f"{work}/THREAD.md: read it first. Reply to the new message(s) addressed to you: {new}. "
+                    "Only read files under the codebase and that thread file. " + rules(name))
     log = open(os.path.join(STATE, name + ".log"), "a")
-    log.write(f"\n=== {time.ctime()} replying to {new}\n")
-    log.flush()
-    if name == "codex":
-        env["CODEX_HOME"] = os.path.join(HOME, ".codex-home")
-        out = os.path.join(STATE, "codex_last.md")
+    s = session(name)
+    why = stale(name, s, phash)
+    out = os.path.join(STATE, name + "_last.md")
+    for attempt in (0, 1):
+        if why:
+            s, prompt = None, fresh_prompt
+        else:
+            unseen = [m for m in msgs if m["id"] > s.get("upto", 0) and m["from"] != name]
+            prompt = ("# New in the thread since your last turn\n\n" + ("".join(fmt(m) for m in unseen) or "(nothing)\n")
+                      + (f"\nThe code snapshot at {CODE} changed since your last turn (HEAD {head_line}); re-read files you rely on.\n"
+                         if head != s.get("head") else "")
+                      + f"\nReply to the message(s) addressed to you: {new}. Same rules as before: " + rules(name))
+        log.write(f"\n=== {time.ctime()} replying to {new}: " + (f"fresh session ({why})" if why else
+                  f"resuming {s['id']} (turn {s.get('turns', 0) + 1})") + "\n")
+        log.flush()
         if os.path.exists(out):
             os.unlink(out)
-        r = stream(name, ["codex", "exec", "--json", "--skip-git-repo-check", "--ephemeral", "-C", work,
-                          "-c", "model_reasoning_effort=" + os.environ.get("AGORA_CODEX_EFFORT", "medium"),
-                          "-o", out, "-"], prompt, work, env, log, timeout, codex_event)
-        text = open(out).read().strip() if os.path.exists(out) else ""
-    else:  # hydrogen: Antigravity CLI print mode. Its workspace is the code snapshot plus its own work dir; in
-        # headless mode anything needing approval (non-workspace reads, shell commands, edits) is auto-denied.
         res = {}
-        r = stream(name, [AGY, "--model", os.environ.get("AGORA_HYDROGEN_MODEL", "gemini-4-hydrogen-high"),
-                          "--add-dir", CODE, "--output-format", "stream-json", "-p=" + prompt], None, work, env, log,
-                   timeout, lambda n, e: agy_event(n, e, res))
-        text = (res.get("text") or "").strip()
-        log.write(text + "\n")
+        cmd, on_stdin = agent_cmd(name, s and s["id"], work, out)
+        if not on_stdin:
+            cmd.append("-p=" + prompt)
+        handler = {"codex": codex_event, "hydrogen": agy_event, "claude": claude_event}[name]
+        r = stream(name, cmd, prompt if on_stdin else None, work, agent_env(name), log, timeout,
+                   lambda n, e: handler(n, e, res))
+        text = (open(out).read() if name == "codex" and os.path.exists(out) else res.get("text") or "").strip()
+        if name != "codex":
+            log.write(text + "\n")
+        if r.returncode == 0 and text and res.get("sid"):
+            session(name, {"id": res["sid"], "turns": (s or {}).get("turns", 0) + 1, "tokens": res.get("tokens", 0),
+                           "upto": msgs[-1]["id"] if msgs else 0, "proto": phash, "head": head,
+                           "started": (s or {}).get("started") or time.strftime("%Y-%m-%d %H:%M:%S")})
+            break
+        session(name, drop=True)  # never resume a session whose last turn failed
+        if why or r.returncode < 0:  # a fresh run failed, or the turn was killed (timeout): don't retry
+            break
+        why = f"resume failed (rc {r.returncode})"
+        log.write(why + "; retrying fresh\n")
     if msgs:
         seen(name, msgs[-1]["id"])
     if r.returncode or not text:
@@ -461,23 +595,52 @@ def claude_hook(phase):
     key = d.get("tool_use_id") or tool
     if phase == "post":
         return act("claude", key, None, existing=True)
+    what = claude_tool_text(tool, inp)
+    if what:
+        act("claude", key, what, bg=bool(inp.get("run_in_background")), existing=True)
+
+
+def claude_tool_text(tool, inp):
+    """Claude Code tool call -> short activity text (None: don't show)."""
     if tool == "Bash":
         cmd = inp.get("command", "")
-        if "/agora " in cmd or cmd.startswith("agora "):
-            return
-        what = describe_cmd(cmd)
-    elif tool in ("Read", "Edit", "Write"):
+        return None if "/agora " in cmd or cmd.startswith("agora ") else describe_cmd(cmd)
+    if tool in ("Read", "Edit", "Write"):
         f = (inp.get("file_path") or "").replace(CODE + "/", "")
-        what = ("reading " if tool == "Read" else "editing ") + os.path.basename(f) if "/agora/" not in f else "reading " + f
-    elif tool in ("Grep", "Glob"):
-        what = f"searching `{(inp.get('pattern') or '')[:30]}`"
-    elif tool.startswith("Web") or "exa" in tool:
-        what = "searching the web"
-    elif tool == "Agent":
-        what = "running a subagent"
-    else:
-        return
-    act("claude", key, what, bg=bool(inp.get("run_in_background")), existing=True)
+        return ("reading " if tool == "Read" else "editing ") + os.path.basename(f) if "/agora/" not in f else "reading " + f
+    if tool in ("Grep", "Glob"):
+        return f"searching `{(inp.get('pattern') or '')[:30]}`"
+    if tool.startswith("Web") or "exa" in tool:
+        return "searching the web"
+    if tool == "Agent":
+        return "running a subagent"
+    return None
+
+
+def claude_event(name, e, res):
+    """Headless Claude Code (stream-json) event: activity, session id, reply text, context size."""
+    t = e.get("type")
+    if e.get("session_id"):
+        res["sid"] = e["session_id"]
+    if t == "assistant":
+        msg = e.get("message") or {}
+        u = msg.get("usage") or {}
+        if u:  # context of the latest model call
+            res["tokens"] = sum(u.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+        for c in msg.get("content") or []:
+            if c.get("type") == "tool_use":
+                act(name, c.get("id"), claude_tool_text(c.get("name", ""), c.get("input") or {}) or c.get("name", "tool"))
+            elif c.get("type") in ("thinking", "redacted_thinking"):
+                busy(name, True, "thinking")
+            elif c.get("type") == "text":
+                busy(name, True, "writing")
+    elif t == "user":
+        for c in (e.get("message") or {}).get("content") or []:
+            if isinstance(c, dict) and c.get("type") == "tool_result":
+                act(name, c.get("tool_use_id"))
+                busy(name, True, "thinking")
+    elif t == "result":
+        res["text"] = "" if e.get("is_error") else (e.get("result") or "")
 
 
 def busy_now():
@@ -819,9 +982,12 @@ def main():
     p = sp.add_parser("wake"); p.add_argument("-a", "--as", dest="who", required=True)
     p = sp.add_parser("hook", help="Claude Code tool hook (reads hook JSON on stdin)"); p.add_argument("phase", choices=["pre", "post"])
     sp.add_parser("protocol"); p = sp.add_parser("intro"); p.add_argument("name", choices=["hydrogen"])
-    sp.add_parser("sync"); sp.add_parser("codex"); sp.add_parser("hydrogen"); sp.add_parser("status")
+    sp.add_parser("sync"); sp.add_parser("status")
+    for n in AGENTS:
+        sp.add_parser(n, help=f"run {n} once headlessly on the thread")
+    p = sp.add_parser("reset", help="drop agent sessions; their next turn starts fresh"); p.add_argument("name", nargs="?", default="all")
     p = sp.add_parser("serve"); p.add_argument("--budget", type=int, default=BUDGET)
-    p.add_argument("--only", help="comma list of auto agents to serve (default: codex,hydrogen)")
+    p.add_argument("--only", help="comma list of agents to serve (default: config serve, else all)")
     a = ap.parse_args()
 
     if a.cmd in (None, "chat"):
@@ -890,7 +1056,7 @@ def main():
         print(template(a.name.upper() + ".md", code=code, cmd=pre + os.path.realpath(__file__)))
     elif a.cmd == "sync":
         print(f"synced {sync()} files to {CODE}")
-    elif a.cmd in AUTO:
+    elif a.cmd in AGENTS:
         m = run_agent(a.cmd)
         print("slept" if m == "slept" else f"posted #{m['id']}" if m else "no reply")
     elif a.cmd == "serve":
@@ -939,6 +1105,11 @@ def main():
                         working.add(name)
                     threading.Thread(target=turn, args=(name,), daemon=True).start()
             time.sleep(2)
+    elif a.cmd == "reset":
+        for n in (AGENTS if a.name == "all" else [a.name]):
+            if session(n):
+                session(n, drop=True)
+                print(f"{n}: session dropped; next turn starts fresh")
     elif a.cmd == "status":
         msgs = load()
         print(f"{len(msgs)} messages; agent streak {agent_streak(msgs)}; code snapshot: "
@@ -948,6 +1119,11 @@ def main():
             print(f"  {n:8s} seen #{seen(n)}, unread {sum(1 for m in msgs if for_me(m, n) and m['id'] > seen(n))}"
                   + (", asleep until pinged" + (f" or {','.join(z['from'])} posts" if z.get("from") else "") + (time.strftime(" (or %H:%M)", time.localtime(z["until"])) if z["until"] else "")
                      if z else ""))
+        for n in AGENTS:
+            se = session(n)
+            print(f"  {n:8s} " + (f"session {se['id'][:8]}…: {se.get('turns', 0)}/{MAX_TURNS} turns, "
+                                  f"{se.get('tokens', 0) // 1000}k/{MAX_TOKENS // 1000}k tokens, since {se.get('started')}"
+                                  if se else "no session (next turn starts fresh)") + (" [served]" if n in AUTO else ""))
 
 
 if __name__ == "__main__":
