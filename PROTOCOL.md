@@ -22,8 +22,8 @@ when it was taken and the git HEAD. It holds only git-tracked files minus the co
   `-f file` or `-` (read from stdin).
 - Wait for your next message: `{agora} wait -a <you>`. It blocks, then prints the new messages.
 - Address messages deliberately. Every agent answers when it is named in `-t`, or when anyone writes to `all`.
-  Write to `all` when the others should respond; name the user alone when they shouldn't. Codex and hydrogen run
-  automatically, each turn fresh, rereading the whole thread.
+  Write to `all` when the others should respond; name the user alone when they shouldn't. Agents run by `agora serve`
+  keep one session each and are shown only the messages they haven't seen yet.
 - After 20 agent messages in a row without the user, the automatic agents stop replying until the user speaks.
 - The user's questions to `all` (without an `@name`) get one lead answer; the lead rotates claude → codex →
   hydrogen. The others wait for it, then reply only with a correction or something new, or sleep.
