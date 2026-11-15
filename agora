@@ -571,7 +571,7 @@ def chat(to="all", after=None):
     tty = sys.stdout.isatty()
     col = (lambda c, t: f"\033[{c}m{t}\033[0m") if tty else (lambda c, t: t)
     state = {"to": to, "last": after if after is not None else (load()[-1]["id"] if load() else 0),
-             "busy": {}, "stop": False, "mine": set(), "shown": False, "frame": 0}
+             "busy": {}, "stop": False, "mine": set(), "shown": False, "frame": 0, "live": False}
     lock = threading.Lock()
 
     def prompt():
@@ -601,7 +601,7 @@ def chat(to="all", after=None):
             state["shown"] = bool(state["busy"]) and tty
             if state["shown"]:
                 out += typing_line() + "\n"
-            sys.stdout.write(out + prompt() + buf)
+            sys.stdout.write(out + (prompt() + buf if state["live"] else ""))  # input() draws the first prompt
             sys.stdout.flush()
 
     def animate():
@@ -681,6 +681,7 @@ def chat(to="all", after=None):
         after = None
     threading.Thread(target=follow, daemon=True).start()
     threading.Thread(target=animate, daemon=True).start()
+    state["live"] = True
     while True:
         try:
             pr = prompt()
