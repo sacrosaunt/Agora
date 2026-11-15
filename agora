@@ -380,8 +380,10 @@ def run_agent(name, timeout=1800, do_sync=True):
     m = post(name, to, text) if text.strip() else None
     if zz:
         sleep_set(name, True, why="waiting for " + ",".join(wf) if wf else "nothing to add", until_from=wf)
-        for x in wf:   # no deadlock: if x is itself waiting for name (e.g. name was the lead), x gets the turn
-            if name in ((asleep(x) or {}).get("from") or []):
+        # no deadlock: whoever waits on name gets the turn if name waits on them (e.g. name was the lead) or if
+        # name went quiet without posting (their wait would otherwise only end on the timeout)
+        for x in AGENTS:
+            if x != name and name in ((asleep(x) or {}).get("from") or []) and (x in wf or not m):
                 sleep_set(x, False)
                 print(f"{x} was waiting for {name}; woken", file=sys.stderr)
         print(f"{name} " + (f"waits for {','.join(wf)}" if wf else "sleeps until pinged"), file=sys.stderr)
@@ -661,10 +663,10 @@ def chat(to="all", after=None):
                     if m["id"] not in state["mine"]:  # your own lines are already on screen
                         show(m)
             state["busy"] = busy_now()
-            zz = {n for n in AGENTS if asleep(n)}
+            zz = {n: tuple((asleep(n) or {}).get("from") or ()) for n in AGENTS if asleep(n)}  # who sleeps, and on whom
             if zz != state.setdefault("zz", zz):
-                woke = sorted(state["zz"] - zz)
-                emit(col("2", (f"{', '.join(woke)} awake; " if woke else "") + sleep_summary(zz)))
+                woke = sorted(set(state["zz"]) - set(zz))
+                emit(col("2", (f"{', '.join(woke)} awake; " if woke else "") + sleep_summary(set(zz))))
                 state["zz"] = zz
             if not tty and list(state["busy"]) != state.get("said"):
                 state["said"] = list(state["busy"])
