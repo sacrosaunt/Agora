@@ -867,26 +867,51 @@ def chat(to="all", after=None):
             state["shown"] = has_line()
             if state["shown"]:
                 out += typing_line() + "\n"
-            sys.stdout.write(out + (prompt() + buf if state["reading"] else ""))  # else input() draws it
+            sys.stdout.write(out + (prompt() + hl_input(buf) if state["reading"] else ""))  # else input() draws it
             sys.stdout.flush()
+
+    def hl_input(buf):
+        """The typed line with pings coloured, including every name in a leading @a,b recipient list."""
+        lead = re.match(r"@[\w,]+", buf) if tty else None
+        if not lead:
+            return pings(buf)
+        names = lead.group(0)[1:].split(",")
+        head = pings("@" + names[0]) + "".join("," + (f"\033[1;{COLORS[n.lower()].removeprefix('1;')}m{n}\033[22;39m"
+                                                     if n.lower() in COLORS else n) for n in names[1:])
+        return head + pings(buf[lead.end():])
+
+    def paint_input():
+        """Colour @name pings in the line being typed. readline draws it plain; this repaints the same characters in
+        place (cursor saved and restored), so readline's view of the screen stays right. Single-row lines only."""
+        buf = readline.get_line_buffer()
+        if buf == state.get("painted") or not state["reading"]:
+            return
+        state["painted"] = buf
+        if "@" not in buf or len(f"[to {state['to']}] > ") + len(buf) >= shutil.get_terminal_size().columns:
+            return
+        sys.stdout.write("\0337\r" + prompt() + hl_input(buf) + "\0338")
+        sys.stdout.flush()
 
     def animate():
         while not state["stop"]:
-            time.sleep(0.12)
+            time.sleep(0.05)
             if not tty:
                 continue
             with lock:
+                paint_input()
                 state["frame"] += 1
+                if state["frame"] % 2:
+                    continue
                 line = typing_line() if has_line() else None
                 if line is not None and state["shown"]:  # redraw the line above the prompt in place
                     if line == state.get("drawn"):
                         continue
                     sys.stdout.write("\0337\033[1A\r\033[K" + line + "\0338")
                 elif line is not None:
-                    sys.stdout.write("\r\033[K" + typing_line() + "\n" + (prompt() + readline.get_line_buffer() if state["reading"] else ""))
+                    sys.stdout.write("\r\033[K" + typing_line() + "\n" + (prompt() + hl_input(readline.get_line_buffer()) if state["reading"] else ""))
                     state["shown"] = True
                 elif state["shown"]:
-                    sys.stdout.write("\r\033[K\033[1A\r\033[K" + (prompt() + readline.get_line_buffer() if state["reading"] else ""))
+                    sys.stdout.write("\r\033[K\033[1A\r\033[K" + (prompt() + hl_input(readline.get_line_buffer()) if state["reading"] else ""))
                     state["shown"] = False
                 else:
                     continue
