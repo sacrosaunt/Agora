@@ -19,6 +19,8 @@ Each headless agent keeps one persistent CLI session (codex thread / Antigravity
 session, all on the local logins, no API keys) and is resumed with only the messages it hasn't seen. A fresh
 session (full protocol + thread) starts deterministically when there is none, after max_turns turns, past
 max_tokens of context, when the protocol or project notes change, after a failed turn, or on `agora reset`.
+Context means the latest model call's input, not cumulative usage. On a turn/token cap the old session first writes a
+private handoff note (open questions, hypotheses, path:line facts) that goes into the fresh session's prompt.
 
   agora post -a NAME [-t to1,to2|all] [TEXT... | -f FILE | - (stdin)]
                                          as user in a terminal: posts, then opens the live chat (-q: don't)
@@ -306,8 +308,6 @@ def stale(name, s, phash):
 def codex_event(name, e, res):
     if e.get("type") == "thread.started":
         res["sid"] = e.get("thread_id")
-    elif e.get("type") == "turn.completed":
-        res["tokens"] = (e.get("usage") or {}).get("input_tokens", 0)
     it = e.get("item") or {}
     typ, key = it.get("type"), it.get("id")
     if e.get("type") == "item.started":
@@ -327,15 +327,34 @@ def codex_event(name, e, res):
             busy(name, True, "thinking")
 
 
+def codex_context(sid):
+    """Current context size of codex session sid: input tokens of its latest model call, from the rollout log
+    (the --json turn usage sums all calls of the turn, so it overstates the context)."""
+    import glob
+    for f in sorted(glob.glob(os.path.join(HOME, ".codex-home", "sessions", "*", "*", "*", f"*{sid}.jsonl")))[-1:]:
+        last = 0
+        for line in open(f):
+            if '"token_count"' in line:
+                try:
+                    info = json.loads(line)["payload"].get("info") or {}
+                    last = (info.get("last_token_usage") or {}).get("input_tokens", last)
+                except (ValueError, KeyError, AttributeError):
+                    pass
+        return last
+    return 0
+
+
 def agy_event(name, e, res):
     if e.get("conversation_id"):
         res["sid"] = e["conversation_id"]
     if e.get("event") == "result":
         r = e.get("result") or {}
         res["text"], res["sid"] = r.get("response", ""), r.get("conversation_id") or res.get("sid")
-        res["tokens"] = (r.get("usage") or {}).get("input_tokens", 0)
         return
     su = e.get("step_update") or {}
+    u = su.get("usage")
+    if u:  # context of the latest model call (the result's usage is cumulative over the conversation)
+        res["tokens"] = (u.get("input_tokens") or 0) + (u.get("cache_read_tokens") or 0)
     key, st = su.get("step_index"), su.get("state")
     if su.get("step_type") == "tool":
         if st == "ACTIVE":
@@ -436,6 +455,32 @@ def agent_env(name):
     return env
 
 
+def invoke(name, sid, prompt, work, log, timeout):
+    """One CLI run of name (fresh when sid is None, else resuming sid). Returns (process, text, res)."""
+    out = os.path.join(STATE, name + "_last.md")
+    if os.path.exists(out):
+        os.unlink(out)
+    res = {}
+    cmd, on_stdin = agent_cmd(name, sid, work, out)
+    if not on_stdin:
+        cmd.append("-p=" + prompt)
+    handler = {"codex": codex_event, "hydrogen": agy_event, "claude": claude_event}[name]
+    r = stream(name, cmd, prompt if on_stdin else None, work, agent_env(name), log, timeout,
+               lambda n, e: handler(n, e, res))
+    text = (open(out).read() if name == "codex" and os.path.exists(out) else res.get("text") or "").strip()
+    if name != "codex":
+        log.write(text + "\n")
+    if name == "codex" and res.get("sid"):
+        res["tokens"] = codex_context(res["sid"])
+    return r, text, res
+
+
+HANDOFF = ("Your session is about to be replaced by a fresh one ({why}); it will get the protocol and the whole "
+           "thread again, but not your private working memory. Write a handoff note for it, at most 1500 characters: "
+           "open questions, live hypotheses, checks you meant to do, and key facts with path:line. Output only the "
+           "note; it is not posted to the thread.")
+
+
 def run_agent(name, timeout=1800, do_sync=True):
     """Run one headless turn of an agent on the thread and post its reply. Resumes the agent's persistent
     session with just the unseen messages, or starts a fresh one (see stale())."""
@@ -459,7 +504,14 @@ def run_agent(name, timeout=1800, do_sync=True):
     log = open(os.path.join(STATE, name + ".log"), "a")
     s = session(name)
     why = stale(name, s, phash)
-    out = os.path.join(STATE, name + "_last.md")
+    if why and why.endswith(("turns", "tokens")):  # a cap, not a fault: let the old session hand over first
+        log.write(f"\n=== {time.ctime()} handoff from {s['id']} ({why})\n")
+        log.flush()
+        busy(name, True, "writing a handoff note")
+        r, note, _ = invoke(name, s["id"], HANDOFF.format(why=why), work, log, min(timeout, 600))
+        if r.returncode == 0 and note:
+            fresh_prompt += ("\n\n# Handoff note from your previous session (private, not in the thread)\n\n"
+                             + note[:3000] + "\n")
     for attempt in (0, 1):
         if why:
             s, prompt = None, fresh_prompt
@@ -472,18 +524,7 @@ def run_agent(name, timeout=1800, do_sync=True):
         log.write(f"\n=== {time.ctime()} replying to {new}: " + (f"fresh session ({why})" if why else
                   f"resuming {s['id']} (turn {s.get('turns', 0) + 1})") + "\n")
         log.flush()
-        if os.path.exists(out):
-            os.unlink(out)
-        res = {}
-        cmd, on_stdin = agent_cmd(name, s and s["id"], work, out)
-        if not on_stdin:
-            cmd.append("-p=" + prompt)
-        handler = {"codex": codex_event, "hydrogen": agy_event, "claude": claude_event}[name]
-        r = stream(name, cmd, prompt if on_stdin else None, work, agent_env(name), log, timeout,
-                   lambda n, e: handler(n, e, res))
-        text = (open(out).read() if name == "codex" and os.path.exists(out) else res.get("text") or "").strip()
-        if name != "codex":
-            log.write(text + "\n")
+        r, text, res = invoke(name, s and s["id"], prompt, work, log, timeout)
         if r.returncode == 0 and text and res.get("sid"):
             session(name, {"id": res["sid"], "turns": (s or {}).get("turns", 0) + 1, "tokens": res.get("tokens", 0),
                            "upto": msgs[-1]["id"] if msgs else 0, "proto": phash, "head": head,
