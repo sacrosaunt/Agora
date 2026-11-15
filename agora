@@ -24,7 +24,7 @@ private handoff note (open questions, hypotheses, path:line facts) that goes int
 
   agora post -a NAME [-t to1,to2|all] [TEXT... | -f FILE | - (stdin)]
                                          as user in a terminal: posts, then opens the live chat (-q: don't)
-  agora  (or: agora chat [-t to] [--last N])   join the live chat as user: shows the last N messages, follows
+  agora [--last N]  (or: agora chat [-t to] [--last N])   join the live chat as user: shows the last N messages, follows
                                          the thread and posts what you type
   agora read [-a NAME] [--new] [--last N] [--json]   --new: only unseen messages for NAME, then mark them seen
   agora wait -a NAME [--timeout S]       block until a message for NAME arrives, print it, mark seen
@@ -901,7 +901,7 @@ def chat(to="all", after=None):
 
     print(col("2", "Live chat. Type a message and press Enter to post it. @name,name at the start addresses it "
                    "(sticky); @name inside a message pings a sleeping agent; /to NAME sets recipients; /sleep NAME [30m] [until NAME], "
-                   "/wake NAME; /all shows the whole thread; /status; /quit or Ctrl-D leaves."))
+                   "/wake NAME; /last N shows the last N messages, /all the whole thread; /status; /quit or Ctrl-D leaves."))
     if not tty and any(asleep(n) for n in AGENTS):
         print(sleep_summary({n for n in AGENTS if asleep(n)}))
     if after is not None:
@@ -948,8 +948,10 @@ def chat(to="all", after=None):
             with lock:
                 state["stop"] = True
             break
-        if line == "/all":
-            for m in load():
+        if line == "/all" or line.startswith("/last"):
+            n = line[5:].strip()
+            msgs = load()
+            for m in (msgs if line == "/all" else msgs[-(int(n) if n.isdigit() else 20):]):
                 show(m)
             continue
         if line == "/status":
@@ -1005,12 +1007,13 @@ def parse_dur(d):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--last", type=int, help="with no command: join the chat showing this many earlier messages (default 20)")
     sp = ap.add_subparsers(dest="cmd")
     p = sp.add_parser("post"); p.add_argument("-a", "--as", dest="who", required=True)
     p.add_argument("-t", "--to", default="all"); p.add_argument("-f", "--file"); p.add_argument("text", nargs="*")
     p.add_argument("-q", "--no-follow", action="store_true", help="just post; don't open the live chat")
     p = sp.add_parser("chat"); p.add_argument("-t", "--to", default="all")
-    p.add_argument("--last", type=int, default=6, help="show this many earlier messages on joining")
+    p.add_argument("--last", type=int, default=20, help="show this many earlier messages on joining")
     p = sp.add_parser("read"); p.add_argument("-a", "--as", dest="who"); p.add_argument("--new", action="store_true")
     p.add_argument("--last", type=int); p.add_argument("--json", action="store_true")
     p = sp.add_parser("wait"); p.add_argument("-a", "--as", dest="who", required=True)
@@ -1039,7 +1042,7 @@ def main():
 
     if a.cmd in (None, "chat"):
         msgs = load()
-        last = getattr(a, "last", 6)
+        last = a.last if a.last is not None else 20
         return chat(getattr(a, "to", "all"), after=msgs[-min(last, len(msgs))]["id"] - 1 if msgs and last else None)
     if a.cmd == "post":
         live = a.who.lower() == "user" and not a.no_follow and sys.stdin.isatty() and sys.stdout.isatty()
