@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🏛️ agora
+# agora
 
 **One thread. Three coding agents. Your codebase.**
 
@@ -29,24 +29,24 @@ Agree on :31, but the coercion is only on the CSV path: the parquet path keeps n
 SLEEP
 ```
 
-## ✨ Why
+## Why
 
 Asking one model about your code gets you one confident answer. Asking three in the same room gets you
 **disagreement you can act on**: each agent reads the code itself, answers what's addressed to it, and is told to
 check the others rather than echo them.
 
-- 🧵 **One shared thread.** Everything lives in `thread.jsonl` and is rendered to `thread.md`. Everyone sees every
+- **One shared thread.** Everything lives in `thread.jsonl` and is rendered to `thread.md`. Everyone sees every
   message; `-t` only decides who is expected to answer.
-- 🔒 **Read-only snapshot.** Agents read a copy of your repo in `./code` (git-tracked files minus your excludes),
+- **Read-only snapshot.** Agents read a copy of your repo in `./code` (git-tracked files minus your excludes),
   never the live tree, and never edit anything.
-- 🔑 **Your logins, not API keys.** Each CLI runs on its own local login; agora strips `OPENAI_API_KEY`,
+- **Your logins, not API keys.** Each CLI runs on its own local login; agora strips `OPENAI_API_KEY`,
   `CODEX_API_KEY` and `ANTHROPIC_API_KEY` from their environment.
-- 🧠 **Persistent sessions.** Each agent keeps one CLI session and is resumed with only the messages it hasn't seen.
-- 🤫 **Quiet by default.** Agents with nothing new say `SLEEP`; questions to `all` get one lead answer (rotating
+- **Persistent sessions.** Each agent keeps one CLI session and is resumed with only the messages it hasn't seen.
+- **Quiet by default.** Agents with nothing new say `SLEEP`; questions to `all` get one lead answer (rotating
   claude → codex → hydrogen) and the rest reply only with corrections.
-- 💬 **Live terminal chat** with markdown rendering, activity indicators and `@name` pings.
+- **Live terminal chat** with markdown rendering, activity indicators and `@name` pings.
 
-## 🚀 Quick start
+## Quick start
 
 ```bash
 git clone https://github.com/sacrosaunt/Agora.git agora && cd agora
@@ -72,7 +72,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # the scrip
 
 Requires **Python 3.9+** and whichever of `claude`, `codex` and `agy` you want to seat.
 
-## 👥 The participants
+## The participants
 
 | Name         | Who                                   |
 | ------------ | ------------------------------------- |
@@ -85,7 +85,7 @@ The agents are equals: no agent leads or decides for the others. Want to drive o
 session? Leave it out of `"serve"` and run `./agora intro hydrogen` (or point your own Claude Code at
 `./agora protocol`).
 
-## 💬 In the chat
+## In the chat
 
 | Type                         | To                                                    |
 | ---------------------------- | ----------------------------------------------------- |
@@ -99,7 +99,7 @@ session? Leave it out of `"serve"` and run `./agora intro hydrogen` (or point yo
 
 `./agora --last 50` joins showing the last 50 messages (default 20).
 
-## 🛠️ Commands
+## Commands
 
 ```text
 agora [--last N]                      join the live chat
@@ -116,7 +116,7 @@ agora protocol                        print the rules the agents follow
 
 `./agora -h` lists everything.
 
-## ⚙️ Configuration
+## Configuration
 
 `agora.json` (copy `agora.example.json`):
 
@@ -133,7 +133,7 @@ agora protocol                        print the rules the agents follow
 Environment overrides: `AGORA_SRC`, `AGORA_EXCLUDE` (comma-separated), `AGORA_CLAUDE_MODEL`,
 `AGORA_CLAUDE_EFFORT`, `AGORA_CODEX_EFFORT`, `AGORA_HYDROGEN_MODEL`.
 
-## 🧠 How sessions work
+## How sessions work
 
 Each served agent keeps **one persistent CLI session** (a Codex thread, an Antigravity conversation, a Claude Code
 session) and is resumed every turn with only the new messages, so it remembers what it already read.
@@ -151,7 +151,7 @@ On a turn or token cap, the old session first writes a **private handoff note** 
 Headless Claude Code gets read-only tools (Read, Grep, Glob), no MCP servers or slash commands, and skips your user
 settings, so your own hooks don't fire.
 
-## 📜 The rules
+## The rules
 
 The agents follow [`PROTOCOL.md`](PROTOCOL.md). The short version:
 
