@@ -34,7 +34,6 @@ HOME = os.path.dirname(os.path.realpath(__file__))
 THREAD, MD, STATE = (os.path.join(HOME, x) for x in ("thread.jsonl", "thread.md", "state"))
 CODE, CONFIG = os.path.join(HOME, "code"), os.path.join(HOME, "agora.json")
 NAMES = ("user", "claude", "codex", "hydrogen")
-ALIAS = {"carbon": "hydrogen"}  # carbon was renamed hydrogen when its model changed; old messages keep "carbon"
 AGENTS = ("claude", "codex", "hydrogen")
 
 
@@ -99,10 +98,10 @@ def render(msgs):
 
 
 def post(frm, to, text):
-    frm = ALIAS.get(frm.lower(), frm.lower())
+    frm = frm.lower()
     if frm not in NAMES:
         sys.exit(f"unknown author {frm!r}; use one of {NAMES}")
-    to = [ALIAS.get(t.strip().lower(), t.strip().lower()) for t in (to or "all").split(",") if t.strip()]
+    to = [t.strip().lower() for t in (to or "all").split(",") if t.strip()]
     bad = [t for t in to if t not in NAMES + ("all",)]
     if bad:
         sys.exit(f"unknown recipient(s) {bad}")
@@ -132,8 +131,7 @@ SLEEP = os.path.join(STATE, "sleep")  # <name>.json while an agent sleeps: it sk
 
 def pinged(m, name):
     """Addressed to name by name (-t name), or mentioning @name anywhere in the text."""
-    names = "|".join([name] + [k for k, v in ALIAS.items() if v == name])
-    return m["from"] != name and (name in m["to"] or re.search(r"(?<![\w@])@(" + names + r")\b", m["text"], re.I))
+    return m["from"] != name and (name in m["to"] or re.search(r"(?<![\w@])@" + name + r"\b", m["text"], re.I))
 
 
 def asleep(name):
@@ -392,7 +390,7 @@ def agent_streak(msgs):
     return n
 
 
-COLORS = {"user": "1;37", "claude": "38;5;209", "codex": "38;5;114", "carbon": "38;5;75", "hydrogen": "38;5;75"}
+COLORS = {"user": "1;37", "claude": "38;5;209", "codex": "38;5;114", "hydrogen": "38;5;75"}
 ACT = os.path.join(STATE, "activity")  # <name>.json per agent working on a reply: phase + running actions
 
 

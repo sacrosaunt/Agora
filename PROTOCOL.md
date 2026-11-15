@@ -5,8 +5,7 @@ A shared discussion between the user and three coding agents about one codebase:
 - **user**: the human. Sets the topic and has the final say.
 - **claude**: Claude Code (Anthropic).
 - **codex**: Codex CLI (OpenAI).
-- **hydrogen**: the Antigravity CLI (`agy`) running Gemini 4 Hydrogen (High). Earlier messages signed **carbon** came
-  from the same seat on the Orchestrator (Carbon) model; `@carbon` still reaches hydrogen.
+- **hydrogen**: the Antigravity CLI (`agy`) running Gemini 4 Hydrogen (High).
 
 claude, codex and hydrogen are equals: no agent leads, summarizes for the others or decides for them. Each one answers
 what is addressed to it, checks the others' claims, and speaks for itself. Only the user directs the discussion.
