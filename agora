@@ -585,8 +585,20 @@ def chat(to="all", after=None):
 
     SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
+    def zz_text():
+        zz = state.get("zz") or {}
+        return ("💤 " + ", ".join(n + (f" (waits for {', '.join(w)})" if w else "") for n, w in sorted(zz.items()))
+                if zz else "")
+
+    def has_line():
+        return tty and bool(state["busy"] or state.get("zz"))
+
     def typing_line():
+        """The status line above the prompt: who is working on what, then who is asleep."""
         width = shutil.get_terminal_size().columns - 1
+        if not state["busy"]:
+            z = zz_text()
+            return col("2", z if len(z) <= width else z[:width - 1] + "…")
         out, used = col("2", SPIN[state["frame"] % len(SPIN)]), 1
         for n, a in state["busy"].items():
             what = act_text(a)
@@ -597,6 +609,10 @@ def chat(to="all", after=None):
             what = what if len(what) <= room else what[:room - 1] + "…"
             out += (col("2", " ·") if used > 1 else "") + " " + col(COLORS.get(n, "0"), n) + " " + col("2", what)
             used += len(n) + len(what) + 4
+        z = zz_text()
+        if z and width - used > 12:
+            z = "  " + z
+            out += col("2", z if len(z) <= width - used else z[:width - used - 1] + "…")
         return out
 
     def emit(text):
@@ -604,7 +620,7 @@ def chat(to="all", after=None):
         with lock:
             buf = readline.get_line_buffer()
             out = "\r\033[K" + ("\033[1A\r\033[K" if state["shown"] else "") + text + "\n"
-            state["shown"] = bool(state["busy"]) and tty
+            state["shown"] = has_line()
             if state["shown"]:
                 out += typing_line() + "\n"
             sys.stdout.write(out + (prompt() + buf if state["live"] else ""))  # input() draws the first prompt
@@ -617,9 +633,12 @@ def chat(to="all", after=None):
                 continue
             with lock:
                 state["frame"] += 1
-                if state["busy"] and state["shown"]:  # redraw the line above the prompt in place
-                    sys.stdout.write("\0337\033[1A\r\033[K" + typing_line() + "\0338")
-                elif state["busy"]:
+                line = typing_line() if has_line() else None
+                if line is not None and state["shown"]:  # redraw the line above the prompt in place
+                    if line == state.get("drawn"):
+                        continue
+                    sys.stdout.write("\0337\033[1A\r\033[K" + line + "\0338")
+                elif line is not None:
                     sys.stdout.write("\r\033[K" + typing_line() + "\n" + prompt() + readline.get_line_buffer())
                     state["shown"] = True
                 elif state["shown"]:
@@ -627,6 +646,7 @@ def chat(to="all", after=None):
                     state["shown"] = False
                 else:
                     continue
+                state["drawn"] = line
                 sys.stdout.flush()
 
     def pings(out):  # @name mentions in bold, in that participant's colour
@@ -665,8 +685,9 @@ def chat(to="all", after=None):
             state["busy"] = busy_now()
             zz = {n: tuple((asleep(n) or {}).get("from") or ()) for n in AGENTS if asleep(n)}  # who sleeps, and on whom
             if zz != state.setdefault("zz", zz):
-                woke = sorted(set(state["zz"]) - set(zz))
-                emit(col("2", (f"{', '.join(woke)} awake; " if woke else "") + sleep_summary(set(zz))))
+                if not tty:   # in a terminal the status line above the prompt shows this in place
+                    woke = sorted(set(state["zz"]) - set(zz))
+                    emit((f"{', '.join(woke)} awake; " if woke else "") + sleep_summary(set(zz)))
                 state["zz"] = zz
             if not tty and list(state["busy"]) != state.get("said"):
                 state["said"] = list(state["busy"])
@@ -677,8 +698,8 @@ def chat(to="all", after=None):
     print(col("2", "Live chat. Type a message and press Enter to post it. @name,name at the start addresses it "
                    "(sticky); @name inside a message pings a sleeping agent; /to NAME sets recipients; /sleep NAME [30m] [until NAME], "
                    "/wake NAME; /all shows the whole thread; /status; /quit or Ctrl-D leaves."))
-    if any(asleep(n) for n in AGENTS):
-        print(col("2", sleep_summary({n for n in AGENTS if asleep(n)})))
+    if not tty and any(asleep(n) for n in AGENTS):
+        print(sleep_summary({n for n in AGENTS if asleep(n)}))
     if after is not None:
         for m in load():
             if m["id"] > after:
