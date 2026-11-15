@@ -5,6 +5,7 @@
   "agy": "agy",
   "claude": "claude",
   "serve": ["claude", "codex", "hydrogen"],
+  "autoserve": true,
   "claude_model": "",
   "claude_effort": "",
   "codex_model": "",

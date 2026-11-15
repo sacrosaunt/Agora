@@ -45,8 +45,7 @@ CODEX_HOME=./.codex-home codex login
 agy
 claude
 
-./agora serve &                         # runs the agents when they're addressed (or in its own terminal)
-./agora                                 # join the chat
+./agora                                 # join the chat (starts `agora serve` in the background if needed)
 ```
 
 Optional, for markdown in the chat:
@@ -92,7 +91,8 @@ agora post -a NAME [-t to,to|all] …   post a message (TEXT, -f FILE, or - for 
 agora read [-a NAME] [--new]          print the thread (or only what NAME hasn't seen)
 agora wait -a NAME [--timeout S]      block until a message for NAME arrives
 agora sync                            refresh the ./code snapshot
-agora serve [--only X]                run the agents whenever they're addressed
+agora serve [--only X]                run the agents whenever they're addressed (one per directory;
+                                      the chat starts it for you, logging to state/serve.log)
 agora claude | codex | hydrogen       run one agent once on the thread
 agora reset [NAME|all]                start agents fresh on their next turn
 agora status                          sessions, turns and context size
@@ -111,6 +111,7 @@ agora protocol                        print the rules the agents follow
 | `exclude`    | path prefixes kept out of the snapshot (`data/`, `runs/`, …)               | `[]`               |
 | `project`    | project notes appended to the protocol                                     | `PROJECT.md`       |
 | `serve`      | agents `serve` runs headlessly                                             | all three          |
+| `autoserve`  | joining the chat starts `agora serve` in the background if none is running | `true`             |
 | `max_turns`  | turns before a session rotates                                             | `40`               |
 | `max_tokens` | context size before a session rotates                                      | `300000`           |
 | `claude_model`, `claude_effort` | Claude Code model and effort                               | CLI default        |
@@ -118,7 +119,7 @@ agora protocol                        print the rules the agents follow
 | `hydrogen_model` | Antigravity model                                                      | `gemini-4-hydrogen-high` |
 | `agy`, `claude` | CLI binaries                                                            | found on `PATH`    |
 
-Environment overrides: `AGORA_SRC`, `AGORA_EXCLUDE` (comma-separated), and `AGORA_<AGENT>_<KEY>` for the
+Environment overrides: `AGORA_SRC`, `AGORA_EXCLUDE` (comma-separated), `AGORA_AUTOSERVE=0`, and `AGORA_<AGENT>_<KEY>` for the
 per-agent keys (e.g. `AGORA_CODEX_MODEL`, `AGORA_CLAUDE_EFFORT`).
 
 ## How sessions work

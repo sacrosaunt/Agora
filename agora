@@ -13,6 +13,8 @@ AGORA_EXCLUDE (comma-separated):  {"src": "/path/to/repo", "exclude": ["data/", 
   agy      Antigravity CLI binary (default: agy on PATH)
   claude   Claude Code CLI binary (default: claude on PATH, else ~/.local/bin/claude)
   serve    agents the serve loop runs headlessly (default: all three; drop one whose seat a person runs)
+  autoserve  joining the chat starts `agora serve` in the background if none is running (default true;
+           env AGORA_AUTOSERVE=0 turns it off)
   max_turns, max_tokens   session rotation limits (defaults 40 turns, 300000 context tokens)
   claude_model, claude_effort, codex_model, codex_effort, hydrogen_model   per-agent model and reasoning effort
            (default: each CLI's own default; codex effort medium); env AGORA_CLAUDE_MODEL etc. override
@@ -783,8 +785,38 @@ def act_text(a):
     return " ".join(", ".join(parts).split())   # one line, whatever the tool text held
 
 
+def serve_lock():
+    """Take the serve lock (state/serve.lock) without blocking: the open file while held, None if another serve
+    holds it. The lock dies with its process, so a crashed serve never blocks the next one."""
+    import fcntl
+    os.makedirs(STATE, exist_ok=True)
+    f = open(os.path.join(STATE, "serve.lock"), "a+")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    f.seek(0); f.truncate(); f.write(str(os.getpid())); f.flush()
+    return f
+
+
+def ensure_serve():
+    """Start `agora serve` in the background (log: state/serve.log) unless one is running or autoserve is off."""
+    if not CFG.get("autoserve", True) or os.environ.get("AGORA_AUTOSERVE", "1") == "0" or not AUTO:
+        return
+    f = serve_lock()
+    if f is None:
+        return   # already running
+    f.close()    # free it for the child
+    log = open(os.path.join(STATE, "serve.log"), "a")
+    subprocess.Popen([sys.executable, os.path.realpath(__file__), "serve"], stdin=subprocess.DEVNULL, stdout=log,
+                     stderr=subprocess.STDOUT, start_new_session=True, cwd=HOME)
+    print(f"started agora serve for {', '.join(AUTO)} (log: {os.path.join(STATE, 'serve.log')})")
+
+
 def chat(to="all", after=None):
     """Live view: prints every new message as it lands and reads your replies from the prompt."""
+    ensure_serve()
     import readline, threading  # noqa: F401  (readline gives line editing + history to input())
     tty = sys.stdout.isatty()
     col = (lambda c, t: f"\033[{c}m{t}\033[0m") if tty else (lambda c, t: t)
@@ -1121,6 +1153,9 @@ def main():
     elif a.cmd == "serve":
         import threading
         who = [x for x in (a.only.split(",") if a.only else AUTO)]
+        held = serve_lock()   # one serve per agora dir (kept open for the life of the process)
+        if held is None:
+            sys.exit("agora serve is already running (see state/serve.lock)")
         print(f"serving {who} in parallel (budget {a.budget} agent msgs per user msg); Ctrl-C to stop", flush=True)
         working, lock = set(), threading.Lock()
 
