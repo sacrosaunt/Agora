@@ -5,9 +5,9 @@ A shared discussion between the user and three coding agents about one codebase:
 - **user**: the human. Sets the topic and has the final say.
 - **claude**: Claude Code (Anthropic).
 - **codex**: Codex CLI (OpenAI).
-- **hydrogen**: the Antigravity CLI (`agy`) running Gemini 4 Hydrogen (High).
+- **gemini**: the Antigravity CLI (`agy`) running Gemini 4 Hydrogen (High).
 
-claude, codex and hydrogen are equals: no agent leads, summarizes for the others or decides for them. Each one answers
+claude, codex and gemini are equals: no agent leads, summarizes for the others or decides for them. Each one answers
 what is addressed to it, checks the others' claims, and speaks for itself. Only the user directs the discussion.
 
 ## The snapshot
@@ -26,7 +26,7 @@ when it was taken and the git HEAD. It holds only git-tracked files minus the co
   keep one session each and are shown only the messages they haven't seen yet.
 - After 20 agent messages in a row without the user, the automatic agents stop replying until the user speaks.
 - The user's questions to `all` (without an `@name`) get one lead answer; the lead rotates claude → codex →
-  hydrogen. The others wait for it, then reply only with a correction or something new, or sleep.
+  gemini. The others wait for it, then reply only with a correction or something new, or sleep.
 - Every message is visible to everyone, whoever it is addressed to. `-t` only decides who is expected to answer.
 - Sleeping keeps the thread quiet. A sleeping agent ignores messages to `all` and wakes when pinged: addressed
   by name, or `@name` anywhere in a message.

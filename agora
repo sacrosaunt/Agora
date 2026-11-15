@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """agora: a tiny shared discussion thread for several coding agents reading one codebase.
 
-Participants: user, claude, codex, hydrogen (Antigravity). Messages live in thread.jsonl (source of truth) and are
+Participants: user, claude, codex, gemini (Antigravity). Messages live in thread.jsonl (source of truth) and are
 rendered to thread.md. Everyone reads the code from the snapshot in ./code (git-tracked files of the source repo).
 
 Config: agora.json next to this script (see agora.example.json), overridden by env AGORA_SRC and
@@ -16,7 +16,7 @@ AGORA_EXCLUDE (comma-separated):  {"src": "/path/to/repo", "exclude": ["data/", 
   autoserve  joining the chat starts `agora serve` in the background if none is running (default true;
            env AGORA_AUTOSERVE=0 turns it off)
   max_turns, max_tokens   session rotation limits (defaults 40 turns, 300000 context tokens)
-  claude_model, claude_effort, codex_model, codex_effort, hydrogen_model   per-agent model and reasoning effort
+  claude_model, claude_effort, codex_model, codex_effort, gemini_model   per-agent model and reasoning effort
            (default: each CLI's own default; codex effort medium); env AGORA_CLAUDE_MODEL etc. override
 
 Each headless agent keeps one persistent CLI session (codex thread / Antigravity conversation / Claude Code
@@ -36,12 +36,12 @@ private handoff note (open questions, hypotheses, path:line facts) that goes int
                                          several concurrent actions); wait sets it, posting clears it
   agora idle -a NAME                     clear NAME's activity
   agora sync                             refresh ./code from the configured src (tracked + untracked-not-ignored files)
-  agora claude | codex | hydrogen        run that agent once on the thread and post its reply
+  agora claude | codex | gemini          run that agent once on the thread and post its reply
   agora serve [--budget N] [--only X]    loop: answer as the serve agents whenever a message is addressed to them
   agora reset [NAME|all]                 drop agent sessions: their next turn starts fresh
   agora status
   agora protocol                         print the protocol (PROTOCOL.md + the project notes) with real paths
-  agora intro hydrogen                   print the starter prompt for a manually run hydrogen (HYDROGEN.md)
+  agora intro gemini                     print the starter prompt for a manually run gemini (GEMINI.md)
 """
 import argparse, fcntl, json, os, re, shutil, subprocess, sys, tempfile, time
 
@@ -51,8 +51,8 @@ if os.path.isfile(os.path.join(VENV, "bin", "python")) and os.path.realpath(sys.
     os.execv(os.path.join(VENV, "bin", "python"), [os.path.join(VENV, "bin", "python"), os.path.realpath(__file__)] + sys.argv[1:])
 THREAD, MD, STATE = (os.path.join(HOME, x) for x in ("thread.jsonl", "thread.md", "state"))
 CODE, CONFIG = os.path.join(HOME, "code"), os.path.join(HOME, "agora.json")
-NAMES = ("user", "claude", "codex", "hydrogen")
-AGENTS = ("claude", "codex", "hydrogen")
+NAMES = ("user", "claude", "codex", "gemini")
+AGENTS = ("claude", "codex", "gemini")
 
 
 def load_config():
@@ -441,8 +441,8 @@ def agent_cmd(name, sid, work, out):
             "-c", "model_reasoning_effort=" + opt("codex", "effort", "medium")] + (
             ["-c", "model=" + json.dumps(opt("codex", "model"))] if opt("codex", "model") else []) + [
             "-o", out] + ([sid] if sid else []) + ["-"], True
-    if name == "hydrogen":  # Antigravity print mode: workspace = code snapshot + work dir; approvals auto-denied
-        return [AGY, "--model", opt("hydrogen", "model", "gemini-4-hydrogen-high"),
+    if name == "gemini":  # Antigravity print mode: workspace = code snapshot + work dir; approvals auto-denied
+        return [AGY, "--model", opt("gemini", "model", "gemini-4-hydrogen-high"),
                 "--add-dir", CODE, "--output-format", "stream-json"] + (["--conversation", sid] if sid else []), False
     # claude: Claude Code print mode on the local login, read-only tools; no user settings/hooks, MCP servers or
     # skills (they cost ~150k context tokens per turn); prompt on stdin
@@ -474,7 +474,7 @@ def invoke(name, sid, prompt, work, log, timeout):
     cmd, on_stdin = agent_cmd(name, sid, work, out)
     if not on_stdin:
         cmd.append("-p=" + prompt)
-    handler = {"codex": codex_event, "hydrogen": agy_event, "claude": claude_event}[name]
+    handler = {"codex": codex_event, "gemini": agy_event, "claude": claude_event}[name]
     r = stream(name, cmd, prompt if on_stdin else None, work, agent_env(name), log, timeout,
                lambda n, e: handler(n, e, res))
     text = (open(out).read() if name == "codex" and os.path.exists(out) else res.get("text") or "").strip()
@@ -584,7 +584,7 @@ def agent_streak(msgs):
     return n
 
 
-COLORS = {"user": "1;37", "claude": "38;5;209", "codex": "38;5;114", "hydrogen": "38;5;75"}
+COLORS = {"user": "1;37", "claude": "38;5;209", "codex": "38;5;114", "gemini": "38;5;75"}
 ACT = os.path.join(STATE, "activity")  # <name>.json per agent working on a reply: phase + running actions
 
 
@@ -1072,7 +1072,7 @@ def main():
     p.add_argument("why", nargs="*")
     p = sp.add_parser("wake"); p.add_argument("-a", "--as", dest="who", required=True)
     p = sp.add_parser("hook", help="Claude Code tool hook (reads hook JSON on stdin)"); p.add_argument("phase", choices=["pre", "post"])
-    sp.add_parser("protocol"); p = sp.add_parser("intro"); p.add_argument("name", choices=["hydrogen"])
+    sp.add_parser("protocol"); p = sp.add_parser("intro"); p.add_argument("name", choices=["gemini"])
     sp.add_parser("sync"); sp.add_parser("status")
     for n in AGENTS:
         sp.add_parser(n, help=f"run {n} once headlessly on the thread")

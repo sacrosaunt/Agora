@@ -13,7 +13,7 @@ repository: they check each other's claims against the code and cite `path:line`
 
 ---
 
-<p align="center"><img src="docs/chat.png" alt="agora live chat: claude, codex and hydrogen discussing a bug, citing path:line" width="900"></p>
+<p align="center"><img src="docs/chat.png" alt="agora live chat: claude, codex and gemini discussing a bug, citing path:line" width="900"></p>
 
 ## Why
 
@@ -29,7 +29,7 @@ check the others rather than echo them.
   `CODEX_API_KEY` and `ANTHROPIC_API_KEY` from their environment.
 - **Persistent sessions.** Each agent keeps one CLI session and is resumed with only the messages it hasn't seen.
 - **Quiet by default.** Agents with nothing new say `SLEEP`; questions to `all` get one lead answer (rotating
-  claude → codex → hydrogen) and the rest reply only with corrections.
+  claude → codex → gemini) and the rest reply only with corrections.
 - **Live terminal chat** with markdown rendering, activity indicators and `@name` pings.
 
 ## Quick start
@@ -63,10 +63,10 @@ Requires **Python 3.9+** and whichever of `claude`, `codex` and `agy` you want t
 | **user**     | You. Sets the topic, has the final say. |
 | **claude**   | Claude Code (Anthropic)               |
 | **codex**    | Codex CLI (OpenAI)                    |
-| **hydrogen** | Antigravity CLI (`agy`)               |
+| **gemini**   | Gemini via the Antigravity CLI (`agy`) |
 
 The agents are equals: no agent leads or decides for the others. Want to drive one seat yourself in an interactive
-session? Leave it out of `"serve"` and run `./agora intro hydrogen` (or point your own Claude Code at
+session? Leave it out of `"serve"` and run `./agora intro gemini` (or point your own Claude Code at
 `./agora protocol`).
 
 ## In the chat
@@ -74,7 +74,7 @@ session? Leave it out of `"serve"` and run `./agora intro hydrogen` (or point yo
 | Type                         | To                                                    |
 | ---------------------------- | ----------------------------------------------------- |
 | `@codex,claude your text`    | address a message (sticky until changed)              |
-| `… @hydrogen …`              | ping a sleeping agent from inside a message           |
+| `… @gemini …`                | ping a sleeping agent from inside a message           |
 | `/to NAME`                   | set the recipients                                    |
 | `/sleep NAME [30m] [until NAME]` · `/wake NAME` | quiet or wake an agent             |
 | `/last N` · `/all`           | show earlier history                                  |
@@ -93,7 +93,7 @@ agora wait -a NAME [--timeout S]      block until a message for NAME arrives
 agora sync                            refresh the ./code snapshot
 agora serve [--only X]                run the agents whenever they're addressed (one per directory;
                                       the chat starts it for you, logging to state/serve.log)
-agora claude | codex | hydrogen       run one agent once on the thread
+agora claude | codex | gemini         run one agent once on the thread
 agora reset [NAME|all]                start agents fresh on their next turn
 agora status                          sessions, turns and context size
 agora protocol                        print the rules the agents follow
@@ -116,7 +116,7 @@ agora protocol                        print the rules the agents follow
 | `max_tokens` | context size before a session rotates                                      | `300000`           |
 | `claude_model`, `claude_effort` | Claude Code model and effort                               | CLI default        |
 | `codex_model`, `codex_effort` | Codex model and reasoning effort                             | CLI default, `medium` |
-| `hydrogen_model` | Antigravity model                                                      | `gemini-4-hydrogen-high` |
+| `gemini_model`   | Antigravity model                                                      | `gemini-4-hydrogen-high` |
 | `agy`, `claude` | CLI binaries                                                            | found on `PATH`    |
 
 Environment overrides: `AGORA_SRC`, `AGORA_EXCLUDE` (comma-separated), `AGORA_AUTOSERVE=0`, and `AGORA_<AGENT>_<KEY>` for the
