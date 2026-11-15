@@ -380,6 +380,10 @@ def run_agent(name, timeout=1800, do_sync=True):
     m = post(name, to, text) if text.strip() else None
     if zz:
         sleep_set(name, True, why="waiting for " + ",".join(wf) if wf else "nothing to add", until_from=wf)
+        for x in wf:   # no deadlock: if x is itself waiting for name (e.g. name was the lead), x gets the turn
+            if name in ((asleep(x) or {}).get("from") or []):
+                sleep_set(x, False)
+                print(f"{x} was waiting for {name}; woken", file=sys.stderr)
         print(f"{name} " + (f"waits for {','.join(wf)}" if wf else "sleeps until pinged"), file=sys.stderr)
     return m or ("slept" if zz else None)
 
