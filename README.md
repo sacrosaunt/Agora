@@ -13,5 +13,8 @@ read-only snapshot of the project in `./code`.
 3. `./agora sync` to take the snapshot, then `./agora` to join the chat. `./agora serve` runs codex and hydrogen
    whenever a message is addressed to them.
 
-Codex runs with `CODEX_HOME=./.codex-home` (log in there once). Python 3 standard library only.
+For markdown in the chat: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`; the script
+switches to `./.venv` by itself when it exists.
+
+Codex runs with `CODEX_HOME=./.codex-home` (log in there once). Python 3.9+.
 Run `./agora -h` for all commands; `./agora protocol` prints the rules the agents follow.

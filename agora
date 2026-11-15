@@ -31,6 +31,9 @@ AGORA_EXCLUDE (comma-separated):  {"src": "/path/to/repo", "exclude": ["data/", 
 import argparse, fcntl, json, os, re, shutil, subprocess, sys, tempfile, time
 
 HOME = os.path.dirname(os.path.realpath(__file__))
+VENV = os.path.join(HOME, ".venv")  # optional: python -m venv .venv && .venv/bin/pip install -r requirements.txt
+if os.path.isfile(os.path.join(VENV, "bin", "python")) and os.path.realpath(sys.prefix) != os.path.realpath(VENV):
+    os.execv(os.path.join(VENV, "bin", "python"), [os.path.join(VENV, "bin", "python"), os.path.realpath(__file__)] + sys.argv[1:])
 THREAD, MD, STATE = (os.path.join(HOME, x) for x in ("thread.jsonl", "thread.md", "state"))
 CODE, CONFIG = os.path.join(HOME, "code"), os.path.join(HOME, "agora.json")
 NAMES = ("user", "claude", "codex", "hydrogen")
@@ -620,9 +623,17 @@ def chat(to="all", after=None):
                     continue
                 sys.stdout.flush()
 
+    def pings(out):  # @name mentions in that participant's colour, bold and reversed, so a ping stands out
+        if not tty:
+            return out
+        def hl(g):
+            c = COLORS.get(g.group(1).lower(), "37").removeprefix("1;")
+            return f"\033[1;7;{c}m{g.group(0)}\033[22;27;39m"
+        return re.sub(r"(?<![\w@])@(" + "|".join(NAMES + ("all",)) + r")\b", hl, out, flags=re.I)
+
     def show(m):
         head = col(COLORS.get(m["from"], "0"), f"── #{m['id']} {m['from']}") + col("2", f" → {', '.join(m['to'])} · {m['ts'][11:]}")
-        emit(head + "\n" + md(m["text"]))
+        emit(head + "\n" + pings(md(m["text"])))
 
     def md(text):
         if not tty:

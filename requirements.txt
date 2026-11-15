@@ -1,0 +1,1 @@
+rich  # markdown rendering in the live chat (optional; falls back to plain text)
