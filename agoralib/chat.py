@@ -142,8 +142,15 @@ def chat(to="all", after=None):
             write_then_prompt(out, buf)   # the prompt only while input() waits (else input() draws it)
             sys.stdout.flush()
 
+    SLASH = ("independent", "ind", "audit", "design", "decide", "decisions", "sleep", "wake", "to", "last", "all",
+             "status", "clock", "quit", "q", "exit")   # the commands the input loop below accepts
+
     def hl_input(buf):
-        """The typed line with pings coloured, including every name in a leading @a,b recipient list."""
+        """The typed line with pings coloured, including every name in a leading @a,b recipient list, and a leading
+        valid /command in bold."""
+        cmd = re.match(r"/(?:" + "|".join(SLASH) + r")(?=\s|$)", buf) if tty else None
+        if cmd:
+            return "\033[1m" + cmd.group(0) + "\033[22m" + pings(buf[cmd.end():])
         lead = re.match(r"@[\w,]+", buf) if tty else None
         if not lead:
             return pings(buf)
@@ -153,13 +160,13 @@ def chat(to="all", after=None):
         return head + pings(buf[lead.end():])
 
     def paint_input():
-        """Colour @name pings in the line being typed. readline draws it plain; this repaints the same characters in
+        """Colour @name pings (and bold a leading /command) in the line being typed. readline draws it plain; this repaints the same characters in
         place (cursor saved and restored), so readline's view of the screen stays right; wrapped lines included."""
         buf = line_buffer()
         if buf == state.get("painted") or not state["reading"]:
             return
         before, state["painted"] = state.get("painted") or "", buf
-        if "@" not in buf and "@" not in before:
+        if "@" not in buf + before and not buf.startswith("/") and not before.startswith("/"):
             return
         sys.stdout.write("\0337" + mv(up()) + "\r" + prompt() + hl_input(buf) + "\033[J\0338")
         sys.stdout.flush()
