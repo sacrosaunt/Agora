@@ -39,7 +39,7 @@ max_tokens of context, when the protocol or project notes change, after a failed
 Context means the latest model call's input, not cumulative usage. On a turn/token cap the old session first writes a
 private handoff note (open questions, hypotheses, path:line facts) that goes into the fresh session's prompt.
 
-  agora post -a NAME [-t to1,to2|all] [TEXT... | -f FILE | - (stdin)]
+  agora post -a NAME [-t to1,to2|all] [--re N] [TEXT... | -f FILE | - (stdin)]
                                          as user in a terminal: posts, then opens the live chat (-q: don't)
   agora [--last N]  (or: agora chat [-t to] [--last N])   join the live chat as user: shows the last N messages, follows
                                          the thread and posts what you type
@@ -97,6 +97,7 @@ def main():
                    "findings), independent (every agent answers blind; the answers are revealed together, then "
                    "cross-checked)")
     p.add_argument("--independent", dest="mode", action="store_const", const="independent", help="= --mode independent")
+    p.add_argument("--re", metavar="N[,N]", help="the messages this one answers (shown as ↩ #N in the header)")
     p = sp.add_parser("chat"); p.add_argument("-t", "--to", default="all")
     p.add_argument("--last", type=int, default=20, help="show this many earlier messages on joining")
     p = sp.add_parser("read"); p.add_argument("-a", "--as", dest="who"); p.add_argument("--new", action="store_true")
@@ -174,7 +175,11 @@ def main():
         client()   # an idle serve can't exit between this post and the check below
         who, msgs = a.who.lower(), load()
         asked = [q for q in open_rounds() if any(m["id"] == q and pinged(m, who) for m in msgs)]
-        m = post(a.who, a.to, text, mode=a.mode, hold=asked)
+        try:
+            re_ = [int(x.strip().lstrip("#")) for x in a.re.split(",") if x.strip()] if a.re else []
+        except ValueError:
+            sys.exit("--re takes message numbers, e.g. --re 12,14")
+        m = post(a.who, a.to, text, mode=a.mode, hold=asked, re_=re_)
         if not m.get("held") and any(for_me(m, x) for x in AUTO):
             ensure_serve()
         if m.get("held"):
