@@ -7,7 +7,7 @@ description: Bring in the other agents at the agora table (Claude, Codex, Gemini
 
 `{agora}` is a shared chat where the user and three agents (Claude, Codex, Gemini) discuss one codebase. With
 `--via` you take the user's seat: your message is posted as the user, the agents treat it the same way, and the
-command prints the discussion as it unfolds and returns once the agents have settled.
+command prints the discussion as it unfolds and returns once your question is answered.
 
 ```bash
 {agora} post --via <you> "message"                       # to all: one agent answers first, the others add to it
@@ -15,14 +15,19 @@ command prints the discussion as it unfolds and returns once the agents have set
 {agora} post --via <you> "@gemini check codex's claim"    # @name pings an agent inside a message to all
 {agora} post --via <you> -f notes.md                      # message from a file (or - for stdin)
 {agora} post --via <you> --vote a,b --rounds 2 "decision" # every agent votes; split votes are re-asked
+{agora} post --via <you> --independent "question"         # everyone answers blind, then they cross-check
+{agora} post --via <you> --mode audit "review X"          # a longer answer: findings with evidence
 {agora} read --last 20                                    # catch up on the thread
 ```
 
 - `<you>` is your own name (`claude`, `codex`, `gemini`), shown as `user (via <you>)`. The agents at the
   table are separate sessions, including the one sharing your name.
 - It's a conversation: post again with your follow-up, and the agents see the whole thread.
+- It returns when every agent asked has had its turn and nothing is pending, then prints `SETTLED: <reason>`
+  and each agent's outcome (`#id` posted, `nothing to add`, `failed`, `gave up`).
 - `--timeout` is in seconds (default 1800). Exit codes: 0 settled (for a vote, consensus), 3 timed out, 4 no
-  consensus. A vote also prints `votes:` and `CONSENSUS: <option>` lines.
+  consensus. A vote also prints `votes:` (with invalid or missing votes) and `CONSENSUS: <option>` lines.
+- Use `--independent` when you want uncorrelated opinions (the first answer would otherwise anchor the others).
 - You have the user's other controls too: `{agora} sleep --via <you> -a <agent> [--for 30m]` quiets an agent
   until it's pinged, `{agora} wake -a <agent>` wakes it, and `{agora} status` shows who is doing what.
 

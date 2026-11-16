@@ -2,7 +2,8 @@
 """agora: a tiny shared discussion thread for several coding agents reading one codebase.
 
 Participants: user, claude, codex, gemini (Antigravity). Messages live in thread.jsonl (source of truth) and are
-rendered to thread.md. Everyone reads the code from the snapshot in ./code (git-tracked files of the source repo).
+rendered to thread.md. Everyone reads the code from the snapshot in ./code (tracked + untracked-not-ignored files
+of the source repo, minus excludes, plus its git history unless "history": false).
 
 Config: agora.json next to this script (see agora.example.json), overridden by env AGORA_SRC and
 AGORA_EXCLUDE (comma-separated):  {"src": "/path/to/repo", "exclude": ["data/", "runs/", ...]}
@@ -13,6 +14,8 @@ AGORA_EXCLUDE (comma-separated):  {"src": "/path/to/repo", "exclude": ["data/", 
   agy      Antigravity CLI binary (default: agy on PATH)
   claude   Claude Code CLI binary (default: claude on PATH, else ~/.local/bin/claude)
   also     {"name": "/path/to/repo", ...}: extra repos the agents may read, snapshotted to ./also/<name>
+  history  put the git history (.git) into the snapshots (default true)
+  independent_timeout   seconds before an independent round is revealed with whoever answered (default 1200)
   serve    agents the serve loop runs headlessly (default: all three; drop one whose seat a person runs)
   autoserve  joining the chat starts `agora serve` in the background if none is running (default true;
            env AGORA_AUTOSERVE=0 turns it off)
@@ -33,9 +36,12 @@ private handoff note (open questions, hypotheses, path:line facts) that goes int
                                          the thread and posts what you type
   agora read [-a NAME] [--new] [--last N] [--json]   --new: only unseen messages for NAME, then mark them seen
   agora wait -a NAME [--timeout S]       block until a message for NAME arrives, print it, mark seen
-  agora post --via AGENT [-t to] [--vote a,b [--rounds N]] [--timeout S] [TEXT | -f FILE | -]
+  agora post --via AGENT [-t to] [--vote a,b [--rounds N]] [--timeout S] [--mode M] [TEXT | -f FILE | -]
                                          an agent speaking for the user: posts as the user, prints the discussion
-                                         as it happens and returns once the agents settle; --vote polls every agent
+                                         as it happens and returns once the question is answered (prints the
+                                         outcomes and why it stopped); --vote polls every agent
+  --mode audit|design|independent        (user posts) a longer structured answer, or an independent round: every
+                                         agent answers blind, the answers are revealed together, then cross-checked
   agora skill [--install DIR]            print the agent skill for `post --via` (or write DIR/agora/SKILL.md)
   agora doing -a NAME [--id ID [--bg] [--done]] TEXT   show what NAME is doing in the chat (phase, or one of
                                          several concurrent actions); wait sets it, posting clears it
@@ -87,6 +93,7 @@ def also_note():
 CLAUDE = os.path.expanduser(os.environ.get("AGORA_CLAUDE") or CFG.get("claude") or shutil.which("claude")
                             or "~/.local/bin/claude")
 MAX_TURNS, MAX_TOKENS = int(CFG.get("max_turns", 40)), int(CFG.get("max_tokens", 300_000))
+HISTORY = bool(CFG.get("history", True))   # put the repo's git history (.git) in the snapshots
 
 
 def winpath(path):
@@ -127,18 +134,33 @@ def load():
         return [json.loads(l) for l in f if l.strip()]
 
 
+def tag(m):
+    """Header tag for messages of an independent round or with a reply mode ('' for ordinary messages)."""
+    if m.get("independent"):
+        return f" ◆ independent answer to #{m['independent']}"
+    return {"independent": " ◆ independent", "audit": " ◆ audit", "design": " ◆ design"}.get(m.get("mode"), "")
+
+
 def render(msgs):
     out = ["# Agora thread\n", "Read-only codebase snapshot: `" + CODE + "`. Protocol: `agora protocol`.\n"]
     for m in msgs:
-        out.append(f"\n---\n### #{m['id']} {author(m)} → {', '.join(m['to'])} · {m['ts']}\n\n{m['text'].rstrip()}\n")
+        out.append(f"\n---\n### #{m['id']} {author(m)} → {', '.join(m['to'])}{tag(m)} · {m['ts']}\n\n{m['text'].rstrip()}\n")
     tmp = MD + ".tmp"
     with open(tmp, "w") as f:
         f.writelines(out)
     os.replace(tmp, MD)
 
 
-def post(frm, to, text, via=None):
-    """via: an agent posting as the user on the user's behalf (agora post --via NAME)."""
+PING = re.compile(r"(?<![\w@])@(" + "|".join(AGENTS) + r"|all)\b", re.I)
+MODES = ("short", "audit", "design", "independent")
+INDEP = os.path.join(STATE, "independent")  # <qid>/<agent>.json: answers held until the round is revealed
+
+
+def post(frm, to, text, via=None, mode=None, extra=None):
+    """via: an agent posting as the user on the user's behalf (agora post --via NAME). mode (user messages):
+    the reply shape asked for (audit, design) or an independent round. extra: more fields for the record.
+    An agent's message while an independent round it hasn't answered is open is held, not posted: returns
+    {"held": qid, ...}."""
     frm = frm.lower()
     if frm not in NAMES:
         sys.exit(f"unknown author {frm!r}; use one of {NAMES}")
@@ -149,6 +171,16 @@ def post(frm, to, text, via=None):
     text = text.strip()
     if not text:
         sys.exit("empty message")
+    if mode and mode not in MODES:
+        sys.exit(f"unknown mode {mode!r}; use one of {MODES}")
+    if frm in AGENTS and not (extra or {}).get("independent"):
+        q = next((q for q in open_rounds() if not os.path.exists(os.path.join(INDEP, str(q), frm + ".json"))), None)
+        if q:
+            held = {"from": frm, "to": to, "text": text, "ts": time.strftime("%Y-%m-%d %H:%M:%S"), "held": q}
+            with open(os.path.join(INDEP, str(q), frm + ".json"), "w") as f:
+                json.dump(held, f)
+            busy(frm, False)
+            return held
     with open(THREAD, "a+") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         f.seek(0)
@@ -156,12 +188,17 @@ def post(frm, to, text, via=None):
         m = {"id": n + 1, "from": frm, "to": to, "ts": time.strftime("%Y-%m-%d %H:%M:%S"), "text": text}
         if via:
             m["via"] = via
+        if mode and mode != "short":
+            m["mode"] = mode
+        m.update(extra or {})
         f.write(json.dumps(m, ensure_ascii=False) + "\n")
         f.flush()
         fcntl.flock(f, fcntl.LOCK_UN)
     render(load())
-    if frm == "user" and to == ["all"] and "@" not in text:
-        take_turns(m["id"])
+    if mode == "independent":
+        os.makedirs(os.path.join(INDEP, str(m["id"])), exist_ok=True)
+    elif frm == "user" and to == ["all"] and not PING.search(text):
+        take_turns(m["id"])   # a plain question to all: one lead answer (an @agent or @all ping asks everyone)
     if frm != "user":
         busy(frm, False)
         if frm in AGENTS and to and all(t in AGENTS and t != frm for t in to):
@@ -173,8 +210,14 @@ SLEEP = os.path.join(STATE, "sleep")  # <name>.json while an agent sleeps: it sk
 
 
 def pinged(m, name):
-    """Addressed to name by name (-t name), or mentioning @name anywhere in the text."""
-    return m["from"] != name and (name in m["to"] or re.search(r"(?<![\w@])@" + name + r"\b", m["text"], re.I))
+    """Addressed to name by name (-t name), mentioning @name anywhere in the text, the user mentioning @all, or
+    a user question opening an independent round (everyone answers it)."""
+    if m["from"] == name:
+        return False
+    if name in m["to"] or re.search(r"(?<![\w@])@" + name + r"\b", m["text"], re.I):
+        return True
+    return m["from"] == "user" and name in AGENTS and (
+        m.get("mode") == "independent" or bool(re.search(r"(?<![\w@])@all\b", m["text"], re.I)))
 
 
 def asleep(name):
@@ -251,7 +294,124 @@ def seen(name, val=None):
 
 
 def fmt(m):
-    return f"### #{m['id']} {author(m)} → {', '.join(m['to'])} · {m['ts']}\n\n{m['text'].rstrip()}\n"
+    return f"### #{m['id']} {author(m)} → {', '.join(m['to'])}{tag(m)} · {m['ts']}\n\n{m['text'].rstrip()}\n"
+
+
+ROUND_TIMEOUT = float(CFG.get("independent_timeout", 1200))  # an independent round is revealed after this
+
+
+def open_rounds():
+    """Ids of independent rounds whose answers are still held (oldest first)."""
+    try:
+        return sorted(int(d) for d in os.listdir(INDEP) if d.isdigit()
+                      and not os.path.exists(os.path.join(INDEP, d, "revealed")))
+    except OSError:
+        return []
+
+
+def round_members():
+    """Agents an independent round waits for: the served ones, plus any agent run by hand that was active in the
+    last two hours (it updates its seen marker when it reads the thread)."""
+    now = time.time()
+    def active(n):
+        try:
+            return now - os.path.getmtime(os.path.join(STATE, n + ".seen")) < 7200
+        except OSError:
+            return False
+    return [n for n in AGENTS if n in AUTO or active(n)]
+
+
+def round_status(q):
+    """{agent: held record} for round q."""
+    d, out = os.path.join(INDEP, str(q)), {}
+    for n in AGENTS:
+        try:
+            out[n] = json.load(open(os.path.join(d, n + ".json")))
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def hold_outcome(q, name, **kw):
+    """Record that name won't answer round q (it slept or failed), so the round doesn't wait for it."""
+    p = os.path.join(INDEP, str(q), name + ".json")
+    if os.path.isdir(os.path.dirname(p)) and not os.path.exists(p):
+        with open(p, "w") as f:
+            json.dump({"from": name, **kw}, f)
+
+
+def reveal_due(force=False):
+    """Post the held answers of every round that is complete (all members answered, slept or failed) or past
+    ROUND_TIMEOUT, together, each addressed to the user and the other agents so they cross-check one another."""
+    msgs = None
+    for q in open_rounds():
+        held = round_status(q)
+        msgs = msgs or load()
+        qm = next((m for m in msgs if m["id"] == q), None)
+        t0 = time.mktime(time.strptime(qm["ts"], "%Y-%m-%d %H:%M:%S")) if qm else 0
+        if not (force or set(round_members()) <= set(held) or time.time() - t0 > ROUND_TIMEOUT):
+            continue
+        open(os.path.join(INDEP, str(q), "revealed"), "w").close()
+        answers = [h for n, h in held.items() if h.get("text")]
+        for h in answers:
+            others = [n for n in AGENTS if n != h["from"] and n in held and held[n].get("text")]
+            post(h["from"], ",".join(["user"] + others), h["text"], extra={"independent": q})
+        missing = [n for n in round_members() if n not in held]
+        quiet = [n for n, h in held.items() if not h.get("text")]
+        log_turn("reveal", [q], "revealed", note=f"{len(answers)} answers"
+                 + (f"; no answer from {', '.join(missing)}" if missing else "")
+                 + (f"; nothing to add: {', '.join(quiet)}" if quiet else ""))
+
+
+TURNS = os.path.join(STATE, "turns.jsonl")  # one line per agent turn: who, which messages, what came of it
+
+
+def log_turn(name, ids, outcome, msg=None, note=""):
+    """outcome: posted (msg = id), held (independent round), slept (nothing to add), failed, gave up, budget,
+    revealed."""
+    os.makedirs(STATE, exist_ok=True)
+    with open(TURNS, "a") as f:
+        f.write(json.dumps({"t": time.time(), "name": name, "ids": list(ids), "outcome": outcome, "msg": msg,
+                            "note": note}) + "\n")
+
+
+def turns_since(t0):
+    try:
+        with open(TURNS) as f:
+            return [r for r in (json.loads(l) for l in f if l.strip()) if r["t"] >= t0]
+    except (OSError, ValueError):
+        return []
+
+
+FAIL = os.path.join(STATE, "failed")  # <name>.json after a failed turn: {ids, rc, tries, next}
+MAX_TRIES = 3
+
+
+def failure(name, val=None, clear=False):
+    p = os.path.join(FAIL, name + ".json")
+    if clear:
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
+        return None
+    if val is not None:
+        os.makedirs(FAIL, exist_ok=True)
+        with open(p, "w") as f:
+            json.dump(val, f)
+        return val
+    try:
+        return json.load(open(p))
+    except (OSError, ValueError):
+        return None
+
+
+def note_failure(name, ids, rc):
+    """Count a failed turn; retries back off 1, 2, 4 min. Returns the record."""
+    f = failure(name) or {"tries": 0}
+    tries = f["tries"] + 1
+    return failure(name, {"ids": sorted(set(f.get("ids", [])) | set(ids)), "rc": rc, "tries": tries,
+                          "next": time.time() + 60 * 2 ** (tries - 1), "t": time.time()})
 
 
 def sync():
@@ -269,7 +429,9 @@ def _snap(src, dest, exclude=()):
     Returns (file count, content digest, HEAD line)."""
     files = subprocess.run(["git", "-C", src, "ls-files", "-z", "-co", "--exclude-standard"],
                            capture_output=True, check=True).stdout.decode().split("\0")
-    files = [f for f in files if f and not f.startswith(exclude) and os.path.isfile(os.path.join(src, f))]
+    root = os.path.realpath(src) + os.sep
+    files = [f for f in files if f and not f.startswith(exclude) and os.path.isfile(os.path.join(src, f))
+             and os.path.realpath(os.path.join(src, f)).startswith(root)]   # no symlinks out of the repo
     dig = __import__("hashlib").sha1()
     for f in files:
         st = os.stat(os.path.join(src, f))
@@ -282,9 +444,16 @@ def _snap(src, dest, exclude=()):
         shutil.copy2(os.path.join(src, f), d)
     os.makedirs(new, exist_ok=True)
     head = subprocess.run(["git", "-C", src, "log", "-1", "--format=%h %s"], capture_output=True, text=True).stdout
+    hist = HISTORY and subprocess.run(["git", "clone", "--bare", "--quiet", src, os.path.join(new, ".git")],
+                                      capture_output=True).returncode == 0
+    if hist:   # the history, read-only: git log / show / diff / blame work in the snapshot
+        subprocess.run(["git", "-C", new, "config", "core.bare", "false"], capture_output=True)
+        subprocess.run(["git", "-C", new, "reset", "-q"], capture_output=True)   # index from HEAD; files untouched
     with open(os.path.join(new, "SNAPSHOT.txt"), "w") as fh:
         fh.write(f"Snapshot of {src} at {time.strftime('%Y-%m-%d %H:%M:%S')}, HEAD {head}"
-                 f"{len(files)} files; excluded: {', '.join(exclude) or 'nothing'} plus gitignored files.\n")
+                 f"{len(files)} files; excluded: {', '.join(exclude) or 'nothing'} plus gitignored files.\n"
+                 + ("Git history is in .git (git log/show/diff/blame); `git status` shows the excluded files as "
+                    "deleted.\n" if hist else ""))
     shutil.rmtree(old, ignore_errors=True)
     if os.path.exists(dest):
         os.rename(dest, old)
@@ -448,10 +617,38 @@ def rules(name):
             "a ping or the user writing to all wakes you. Questions to all are answered by one agent first; if "
             "another agent has already answered what you were asked, reply only with a correction or something "
             "new, otherwise output only `SLEEP`.\n\n"
-            "LENGTH (rule 3, strictly): answer in 1-5 short lines, under ~600 characters. A one-line question "
-            "gets a short answer. Go longer only if the user explicitly asked for an audit, report or design, "
-            "and then still lead with a one-line summary. Cut background, recaps and anything already said in "
-            "the thread.\n")
+            "EVIDENCE (rules 1-2): cite path:line for claims about the code and say what you didn't check; check "
+            "another agent's claim in the code before agreeing with it.\n")
+
+
+LENGTH = {
+    "short": "LENGTH (rule 3): 1-5 short lines, about 600 characters: the answer, its evidence, and at most one "
+             "line of qualification that changes the conclusion. Go longer only if the user asked for an audit, "
+             "review, report or design, and then lead with a one-line summary. No recap of the thread.",
+    "long": "LENGTH (rule 3, {mode} request): start with a one-line summary, then short bullets, one finding each, "
+            "with path:line evidence, then what you didn't check. As long as the content needs, no longer: no "
+            "preamble, recap or closing summary.",
+    "independent": "INDEPENDENT ROUND: the others answer the same question without seeing your answer, and all "
+                   "answers are revealed together afterwards. Give your own full answer; do not output SLEEP because "
+                   "someone else may cover it. ",
+    "crosscheck": "CROSS-CHECK: the independent answers to #{q} were just revealed together. Say where the others "
+                  "are wrong or missed something, citing code, and whether any of them changed your mind; output "
+                  "only SLEEP if you agree and have nothing to add.",
+}
+
+
+def turn_note(new_msgs):
+    """The length and round instructions for a turn answering new_msgs."""
+    modes = {m.get("mode") for m in new_msgs if m["from"] == "user"}
+    rev = sorted({m["independent"] for m in new_msgs if m.get("independent")})
+    s = ""
+    if "independent" in modes:
+        s += LENGTH["independent"]
+    long = next((x for x in ("audit", "design", "independent") if x in modes), None)
+    s += LENGTH["long"].format(mode=long) if long else LENGTH["short"]
+    if rev:
+        s += " " + LENGTH["crosscheck"].format(q=", #".join(map(str, rev)))
+    return s + "\n"
 
 
 def snapshot_head():
@@ -479,7 +676,9 @@ def agent_cmd(name, sid, work, out):
             "-o", out] + ([sid] if sid else []) + ["-"], True
     if name == "gemini":  # Antigravity print mode: workspace = code snapshot + work dir; approvals auto-denied
         return [AGY, "--model", opt("gemini", "model", "gemini-4-hydrogen-high"),
-                "--add-dir", CODE] + (["--add-dir", ALSO_DIR] if ALSO else []) + ["--output-format", "stream-json"] + (["--conversation", sid] if sid else []), False
+                "--add-dir", CODE] + (["--add-dir", ALSO_DIR] if ALSO else []) + [
+                "--input-format", "stream-json", "--output-format", "stream-json"] + (
+                ["--conversation", sid] if sid else []) + ["-p="], True   # prompt on stdin, not in argv
     # claude: Claude Code print mode on the local login, read-only tools; no user settings/hooks, MCP servers or
     # skills (they cost ~150k context tokens per turn); prompt on stdin
     cmd = [CLAUDE, "-p", "--output-format", "stream-json", "--verbose", "--setting-sources", "project,local",
@@ -511,6 +710,8 @@ def invoke(name, sid, prompt, work, log, timeout):
     cmd, on_stdin = agent_cmd(name, sid, work, out)
     if not on_stdin:
         cmd.append("-p=" + prompt)
+    elif name == "gemini":   # agy reads stream-json events on stdin
+        prompt = json.dumps({"event": "user", "message": {"role": "user", "content": prompt}}) + "\n"
     handler = {"codex": codex_event, "gemini": agy_event, "claude": claude_event}[name]
     r = stream(name, cmd, prompt if on_stdin else None, work, agent_env(name), log, timeout,
                lambda n, e: handler(n, e, res))
@@ -537,7 +738,9 @@ def run_agent(name, timeout=1800, do_sync=True):
     thread = "".join(fmt(m) for m in msgs)
     if len(thread) > 200_000:
         thread = "[earlier messages truncated; full thread in " + MD + "]\n\n" + thread[-200_000:]
-    new = [m["id"] for m in msgs if for_me(m, name) and m["id"] > seen(name)]
+    new_msgs = [m for m in msgs if for_me(m, name) and m["id"] > seen(name)]
+    new = [m["id"] for m in new_msgs]
+    note = turn_note(new_msgs)
     work = os.path.join(HOME, "work", name)
     os.makedirs(work, exist_ok=True)
     with open(os.path.join(work, "THREAD.md"), "w") as f:
@@ -547,7 +750,8 @@ def run_agent(name, timeout=1800, do_sync=True):
     head, head_line = snapshot_head()
     fresh_prompt = (proto + f"\n\n# You are: {name}\n\nThe codebase is at {CODE} (read-only). " + also_note() + "The full thread is in "
                     f"{work}/THREAD.md: read it first. Reply to the new message(s) addressed to you: {new}. "
-                    "Only read files under the codebase" + (", the extra snapshots" if ALSO else "") + " and that thread file. " + rules(name))
+                    "Only read files under the codebase" + (", the extra snapshots" if ALSO else "") + " and that thread file. " + rules(name)
+                    + note)
     log = open(os.path.join(STATE, name + ".log"), "a")
     s = session(name)
     why = stale(name, s, phash)
@@ -567,7 +771,7 @@ def run_agent(name, timeout=1800, do_sync=True):
             prompt = ("# New in the thread since your last turn\n\n" + ("".join(fmt(m) for m in unseen) or "(nothing)\n")
                       + (f"\nThe code snapshot at {CODE} changed since your last turn (HEAD {head_line}); re-read files you rely on. " + also_note() + "\n"
                          if head != s.get("head") else "")
-                      + f"\nReply to the message(s) addressed to you: {new}. Same rules as before: " + rules(name))
+                      + f"\nReply to the message(s) addressed to you: {new}. Same rules as before: " + rules(name) + note)
         log.write(f"\n=== {time.ctime()} replying to {new}: " + (f"fresh session ({why})" if why else
                   f"resuming {s['id']} (turn {s.get('turns', 0) + 1})") + "\n")
         log.flush()
@@ -582,11 +786,14 @@ def run_agent(name, timeout=1800, do_sync=True):
             break
         why = f"resume failed (rc {r.returncode})"
         log.write(why + "; retrying fresh\n")
-    if msgs:
-        seen(name, msgs[-1]["id"])
-    if r.returncode or not text:
+    if r.returncode or not text:   # the messages stay unseen: serve retries with backoff, then gives up visibly
+        f = note_failure(name, new, r.returncode)
+        log_turn(name, new, "failed", note=f"rc {r.returncode}, try {f['tries']}/{MAX_TRIES}")
         print(f"{name} failed (rc {r.returncode}); see {STATE}/{name}.log", file=sys.stderr)
         return None
+    if msgs:
+        seen(name, msgs[-1]["id"])
+    failure(name, clear=True)
     to, zz, wf = msgs[-1]["from"] if msgs else "all", False, []
     for _ in range(3):  # directive lines: TO: ..., SLEEP, WAIT: name, in any order
         first, _, rest = text.strip().partition("\n")
@@ -600,6 +807,12 @@ def run_agent(name, timeout=1800, do_sync=True):
             zz, text = True, rest
     sleep_set(name, False)
     m = post(name, to, text) if text.strip() else None
+    if m and m.get("held"):
+        log_turn(name, new, "held", note=f"independent round #{m['held']}")
+        return m
+    for q in open_rounds():   # slept without answering an open independent round: don't wait for it
+        hold_outcome(q, name, slept=True)
+    log_turn(name, new, "posted" if m else "slept", msg=m and m["id"])
     if zz:
         sleep_set(name, True, why="waiting for " + ",".join(wf) if wf else "nothing to add", until_from=wf)
         # no deadlock: whoever waits on name gets the turn if name waits on them (e.g. name was the lead) or if
@@ -851,6 +1064,26 @@ def ensure_serve():
     print(f"started agora serve for {', '.join(AUTO)} (log: {os.path.join(STATE, 'serve.log')})", file=sys.stderr)
 
 
+def vwidth(s):
+    """Terminal columns a string takes (wide East Asian chars and most emoji 2, combining marks 0)."""
+    import unicodedata
+    return sum(0 if unicodedata.combining(c) or c in "\u200d\ufe0e\ufe0f" else
+               2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in s)
+
+
+def clip(s, width):
+    """s cut to at most width columns, with … when cut."""
+    if vwidth(s) <= width:
+        return s
+    out, w = "", 0
+    for c in s:
+        w += vwidth(c)
+        if w > width - 1:
+            break
+        out += c
+    return out + "…"
+
+
 def chat(to="all", after=None):
     """Live view: prints every new message as it lands and reads your replies from the prompt."""
     ensure_serve()
@@ -858,11 +1091,27 @@ def chat(to="all", after=None):
     tty = sys.stdout.isatty()
     col = (lambda c, t: f"\033[{c}m{t}\033[0m") if tty else (lambda c, t: t)
     state = {"to": to, "last": after if after is not None else (load()[-1]["id"] if load() else 0),
-             "busy": {}, "stop": False, "mine": set(), "shown": False, "frame": 0, "reading": False}
+             "busy": {}, "stop": False, "mine": set(), "shown": False, "frame": 0, "reading": False,
+             "toff": os.path.getsize(TURNS) if os.path.exists(TURNS) else 0}
     lock = threading.Lock()
 
-    def prompt():
+    def plain_prompt():
+        return f"[to {state['to']}] > "
+
+    def prompt():   # for our own writes
         return col("2", f"[to {state['to']}] ") + "> "
+
+    def rl_prompt():   # for input(): escapes inside \001…\002 so readline counts only the visible characters
+        return f"\001\033[2m\002[to {state['to']}] \001\033[0m\002> " if tty else plain_prompt()
+
+    def up():
+        """Rows from the cursor (at the end of the line being typed) up to the prompt's first row."""
+        if not state["reading"]:
+            return 0
+        return (vwidth(plain_prompt()) + vwidth(readline.get_line_buffer())) // max(1, shutil.get_terminal_size().columns)
+
+    def mv(n):
+        return f"\033[{n}A" if n > 0 else ""
 
     SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
@@ -872,35 +1121,39 @@ def chat(to="all", after=None):
                 if zz else "")
 
     def has_line():
-        return tty and bool(state["busy"] or state.get("zz"))
+        return tty and bool(state["busy"] or state.get("zz") or state.get("notes"))
+
+    def notes_text():
+        return "  ".join(state.get("notes") or [])
 
     def typing_line():
         """The status line above the prompt: who is working on what, then who is asleep."""
         width = shutil.get_terminal_size().columns - 1
+        nt = notes_text()
         if not state["busy"]:
-            z = zz_text()
-            return col("2", z if len(z) <= width else z[:width - 1] + "…")
+            z = "  ".join(x for x in (nt, zz_text()) if x)
+            return col("33" if nt else "2", clip(z, width))
         out, used = col("2", SPIN[state["frame"] % len(SPIN)]), 1
         for n, a in state["busy"].items():
-            what = act_text(a)
             room = width - used - len(n) - 5
             if room < 8:
                 out += col("2", " …")
                 break
-            what = what if len(what) <= room else what[:room - 1] + "…"
+            what = clip(act_text(a), room)
             out += (col("2", " ·") if used > 1 else "") + " " + col(COLORS.get(n, "0"), n) + " " + col("2", what)
-            used += len(n) + len(what) + 4
-        z = zz_text()
-        if z and width - used > 12:
-            z = "  " + z
-            out += col("2", z if len(z) <= width - used else z[:width - used - 1] + "…")
+            used += len(n) + vwidth(what) + 4
+        for z, c in ((nt, "33"), (zz_text(), "2")):
+            if z and width - used > 12:
+                z = clip("  " + z, width - used)
+                out += col(c, z)
+                used += vwidth(z)
         return out
 
     def emit(text):
         """Print above the prompt, keeping the typing line (if any) directly above what you are typing."""
         with lock:
             buf = readline.get_line_buffer()
-            out = "\r\033[K" + ("\033[1A\r\033[K" if state["shown"] else "") + text + "\n"
+            out = "\r" + mv(up() + (1 if state["shown"] else 0)) + "\033[J" + text + "\n"
             state["shown"] = has_line()
             if state["shown"]:
                 out += typing_line() + "\n"
@@ -919,14 +1172,14 @@ def chat(to="all", after=None):
 
     def paint_input():
         """Colour @name pings in the line being typed. readline draws it plain; this repaints the same characters in
-        place (cursor saved and restored), so readline's view of the screen stays right. Single-row lines only."""
+        place (cursor saved and restored), so readline's view of the screen stays right; wrapped lines included."""
         buf = readline.get_line_buffer()
         if buf == state.get("painted") or not state["reading"]:
             return
         state["painted"] = buf
-        if "@" not in buf or len(f"[to {state['to']}] > ") + len(buf) >= shutil.get_terminal_size().columns:
+        if "@" not in buf:
             return
-        sys.stdout.write("\0337\r" + prompt() + hl_input(buf) + "\0338")
+        sys.stdout.write("\0337" + mv(up()) + "\r" + prompt() + hl_input(buf) + "\0338")
         sys.stdout.flush()
 
     def animate():
@@ -943,12 +1196,12 @@ def chat(to="all", after=None):
                 if line is not None and state["shown"]:  # redraw the line above the prompt in place
                     if line == state.get("drawn"):
                         continue
-                    sys.stdout.write("\0337\033[1A\r\033[K" + line + "\0338")
+                    sys.stdout.write("\0337" + mv(up() + 1) + "\r\033[K" + line + "\0338")
                 elif line is not None:
-                    sys.stdout.write("\r\033[K" + typing_line() + "\n" + (prompt() + hl_input(readline.get_line_buffer()) if state["reading"] else ""))
+                    sys.stdout.write("\r" + mv(up()) + "\033[J" + line + "\n" + (prompt() + hl_input(readline.get_line_buffer()) if state["reading"] else ""))
                     state["shown"] = True
                 elif state["shown"]:
-                    sys.stdout.write("\r\033[K\033[1A\r\033[K" + (prompt() + hl_input(readline.get_line_buffer()) if state["reading"] else ""))
+                    sys.stdout.write("\r" + mv(up() + 1) + "\033[J" + (prompt() + hl_input(readline.get_line_buffer()) if state["reading"] else ""))
                     state["shown"] = False
                 else:
                     continue
@@ -964,7 +1217,8 @@ def chat(to="all", after=None):
         return re.sub(r"(?<![\w@])@(" + "|".join(NAMES + ("all",)) + r")\b", hl, out, flags=re.I)
 
     def show(m):
-        head = col(COLORS.get(m["from"], "0"), f"── #{m['id']} {author(m)}") + col("2", f" → {', '.join(m['to'])} · {m['ts'][11:]}")
+        head = (col(COLORS.get(m["from"], "0"), f"── #{m['id']} {author(m)}") + col("2", f" → {', '.join(m['to'])}")
+                + col("35", tag(m)) + col("2", f" · {m['ts'][11:]}"))
         emit(head + "\n" + pings(md(m["text"])))
 
     def md(text):
@@ -989,6 +1243,43 @@ def chat(to="all", after=None):
                     if m["id"] not in state["mine"]:  # your own lines are already on screen
                         show(m)
             state["busy"] = busy_now()
+            notes = []
+            for q in open_rounds():
+                notes.append(f"◆ #{q} independent: {len(round_status(q))}/{len(round_members())} in")
+            for n in AGENTS:
+                f = failure(n)
+                if f:
+                    notes.append(f"⚠ {n} failed on #{max(f['ids'])}, retry {f['tries']}/{MAX_TRIES}")
+            if os.path.exists(os.path.join(STATE, "halted")):
+                notes.append("⏸ budget reached: agents wait for you")
+            state["notes"] = notes
+            try:
+                with open(TURNS) as fh:
+                    fh.seek(state["toff"])
+                    chunk = fh.read()
+                chunk = chunk[:chunk.rfind("\n") + 1]   # whole lines only; a half-written one waits
+                state["toff"] += len(chunk.encode())
+            except OSError:
+                chunk = ""
+            for l in chunk.splitlines():
+                try:
+                    r = json.loads(l)
+                except ValueError:
+                    continue
+                ids = ", ".join(f"#{i}" for i in r["ids"][-3:])
+                o, n = r["outcome"], r["name"]
+                if o == "slept":
+                    emit(col("2", f"{n}: nothing to add ({ids})"))
+                elif o == "held":
+                    emit(col("2", f"{n} answered ({r['note']}; held until all are in)"))
+                elif o == "failed":
+                    emit(col("31", f"{n} failed on {ids}: {r['note']}"))
+                elif o == "gave up":
+                    emit(col("31", f"{n} gave up on {ids} {r['note']}; those messages are skipped"))
+                elif o == "budget":
+                    emit(col("33", f"budget reached ({r['note']} since you spoke): agents wait for your next message"))
+                elif o == "revealed":
+                    emit(col("35", f"◆ independent round {ids} revealed: {r['note']}"))
             zz = {n: tuple((asleep(n) or {}).get("from") or ()) for n in AGENTS
                   if asleep(n) and n not in state["busy"]}  # who sleeps, and on whom (a woken agent at work is awake)
             if zz != state.setdefault("zz", zz):
@@ -1004,7 +1295,9 @@ def chat(to="all", after=None):
 
     print(col("2", "Live chat. Type a message and press Enter to post it. @name,name at the start addresses it "
                    "(sticky); @name inside a message pings a sleeping agent; /to NAME sets recipients; /sleep NAME [30m] [until NAME], "
-                   "/wake NAME; /last N shows the last N messages, /all the whole thread; /status; /quit or Ctrl-D leaves."))
+                   "/wake NAME; /audit or /design TEXT asks for a longer structured answer; /independent TEXT (/ind) has every "
+                   "agent answer blind, revealed together; /last N shows the last N messages, /all the whole thread; "
+                   "/status; /quit or Ctrl-D leaves."))
     if not tty and any(asleep(n) for n in AGENTS):
         print(sleep_summary({n for n in AGENTS if asleep(n)}))
     if after is not None:
@@ -1021,8 +1314,7 @@ def chat(to="all", after=None):
     readline.set_pre_input_hook(reading)
     while True:
         try:
-            pr = prompt()
-            line = input(pr)
+            line = input(rl_prompt())
         except (EOFError, KeyboardInterrupt):
             with lock:
                 state["reading"] = False
@@ -1034,15 +1326,13 @@ def chat(to="all", after=None):
         with lock:
             state["reading"] = False   # until the next input() draws its own prompt
         cols = shutil.get_terminal_size().columns
-        vis = len(f"[to {state['to']}] > ") + len(line)
-        echo_rows = max(1, -(-vis // cols))   # screen rows your typed line occupies (it gets replaced once posted)
-        with lock:  # Enter pushed the typing line up: put your line in its place so it stays above the prompt
+        vis = vwidth(plain_prompt()) + vwidth(line)
+        echo_rows = vis // cols + 1   # screen rows from your typed line's first row down to the cursor
+        with lock:  # Enter left the status line above your line: clear both, redraw your line in its place
             if state["shown"] and tty:
-                if vis < cols:
-                    sys.stdout.write("\033[2A\r\033[K" + pr + line + "\r\n\033[K")
-                    sys.stdout.flush()
-                else:
-                    echo_rows += 1   # the stale typing line sits above it: clear that too
+                sys.stdout.write(f"\033[{echo_rows + 1}A\r\033[J" + prompt() + hl_input(line) + "\r\n")
+                sys.stdout.flush()
+                echo_rows = max(1, -(-vis // cols))
                 state["shown"] = False
         line = line.strip()
         if not line:
@@ -1076,6 +1366,13 @@ def chat(to="all", after=None):
         if line.startswith("/to"):
             state["to"] = line[3:].strip() or "all"
             continue
+        mode = None
+        mm = re.match(r"/(independent|ind|audit|design)\b\s*(.*)", line, re.S)
+        if mm:
+            mode, line = {"ind": "independent"}.get(mm.group(1), mm.group(1)), mm.group(2).strip()
+            if not line:
+                emit(col("31", f"usage: /{mm.group(1)} TEXT"))
+                continue
         if line.startswith("@"):
             tgt, _, line = line[1:].partition(" ")
             state["to"] = tgt
@@ -1083,7 +1380,7 @@ def chat(to="all", after=None):
             if not line:
                 continue
         try:
-            m = post("user", state["to"], line)
+            m = post("user", state["to"], line, mode=mode)
         except SystemExit as e:
             emit(col("31", str(e)))
             continue
@@ -1105,30 +1402,63 @@ VOTE_ASK = "Pick one of: {opts}. Say why in a few lines, and end with a line `VO
 VOTE = re.compile(r"^\W*VOTE:\s*(.+?)\W*$", re.I | re.M)
 
 
-def settle(after, timeout, show=print):
-    """Stream messages after id `after` until the served agents have nothing left to answer and none is working
-    (checked twice, a few seconds apart), or until timeout. Returns (messages, timed_out)."""
-    t0, shown, calm = time.time(), after, 0
+def settle(q, timeout, show=print):
+    """Stream the messages after question q (a message dict) until it is answered: every served agent expected to
+    take it up has had its turn (posted, had nothing to add, or failed for good), and nothing is left to answer or
+    being worked on (checked twice). Ends early when the table goes quiet for 2 min with turns missing, and at
+    timeout. Returns (messages, outcomes {agent: [str]}, reason, timed_out)."""
+    t0, shown, calm, quiet = time.time(), q["id"] - 1, 0, None
+    expect = [n for n in AUTO if pinged(q, n) or "all" in q["to"] and (asleep(n) or {}).get("why") != "user"]
     while True:
         msgs = load()
         for m in msgs:
             if m["id"] > shown:
-                show(fmt(m)); shown = m["id"]
+                if m["id"] > q["id"]:
+                    show(fmt(m))
+                shown = m["id"]
+        rows = [r for r in turns_since(t0 - 5) if r["ids"] and max(r["ids"]) >= q["id"]]
+        done = {r["name"] for r in rows if r["outcome"] in ("posted", "slept", "held", "gave up")}
         work = busy_now()
         live = [n for n in AUTO if n in work or any(m["id"] > seen(n) and for_me(m, n) for m in msgs)]
-        calm = 0 if live else calm + 1
-        if calm >= 3:
-            return [m for m in msgs if m["id"] > after], False
-        if time.time() - t0 > timeout:
-            print(f"timed out after {timeout:.0f}s; still working: {', '.join(live)}", file=sys.stderr)
-            return [m for m in msgs if m["id"] > after], True
+        held = [r for r in open_rounds() if r >= q["id"]]
+        calm = 0 if live or held else calm + 1
+        missing = [n for n in expect if n not in done]
+        reason = None
+        if calm >= 2 and not missing:
+            reason = "answered: every agent asked had its turn and nothing is pending"
+        elif calm >= 2:
+            quiet = quiet or time.time()
+            if time.time() - quiet > 120:
+                reason = f"quiet for 2 min without a turn from {', '.join(missing)}"
+        else:
+            quiet = None
+        out = time.time() - t0 > timeout
+        if out:
+            reason = f"timed out after {timeout:.0f}s; still working: {', '.join(live) or 'none'}"
+        if reason:
+            outcomes = {}
+            for r in rows:
+                if r["name"] in AGENTS:
+                    outcomes.setdefault(r["name"], []).append(
+                        f"#{r['msg']}" if r["outcome"] == "posted" else "nothing to add" if r["outcome"] == "slept"
+                        else r["outcome"] + (f" ({r['note']})" if r.get("note") else ""))
+            for n in expect:
+                outcomes.setdefault(n, ["no turn"])
+            return [m for m in msgs if m["id"] > q["id"]], outcomes, reason, out
         time.sleep(2)
 
 
-def converse(via, to, text, options=None, rounds=1, timeout=1800.0):
-    """An agent speaking for the user: post as the user, then follow the discussion it starts until it settles.
-    With options it's a vote of every agent, re-asked up to `rounds` times until unanimous.
-    Exit code: 0 settled (vote: consensus), 3 timed out, 4 vote without consensus."""
+def norm_vote(v, options):
+    """The option a VOTE line names (case and punctuation ignored), else None."""
+    k = re.sub(r"[^\w]+", "", v.lower())
+    return next((o for o in options if re.sub(r"[^\w]+", "", o.lower()) == k), None)
+
+
+def converse(via, to, text, options=None, rounds=1, timeout=1800.0, mode=None):
+    """An agent speaking for the user: post as the user, then follow the discussion it starts until the question
+    is answered (see settle), and print who answered and why it stopped. With options it's a vote of every agent,
+    re-asked up to `rounds` times until unanimous. Exit code: 0 settled (vote: consensus), 3 timed out, 4 vote
+    without consensus."""
     ensure_serve()
     if not AUTO:
         print("note: no agents are run by `agora serve` here; nothing will answer automatically", file=sys.stderr)
@@ -1137,19 +1467,30 @@ def converse(via, to, text, options=None, rounds=1, timeout=1800.0):
     vote = VOTE_ASK.format(opts=", ".join(options)) if options else ""
     body = text.strip() + ("\n\n" + vote if vote else "")
     for rnd in range(1, rounds + 1):
-        q = post("user", to, body, via=via)
+        q = post("user", to, body, via=via, mode=mode)
         print(f"posted #{q['id']} as user via {via}; following the discussion…", file=sys.stderr, flush=True)
-        new, out = settle(q["id"], timeout)
+        new, outcomes, reason, out = settle(q, timeout)
+        print(f"\nSETTLED: {reason}")
+        for n, o in sorted(outcomes.items()):
+            print(f"  {n}: {', '.join(o)}")
         if out:
             return 3
         if not options:
             return 0
-        votes = {}
+        votes, bad = {}, {}
         for m in new:
             v = VOTE.findall(m["text"])
             if m["from"] in AGENTS and v:
-                votes[m["from"]] = v[-1].strip().strip("`*").lower()
-        print("votes: " + (", ".join(f"{n} {v}" for n, v in votes.items()) or "none"))
+                pick = norm_vote(v[-1].strip().strip("`*"), options)
+                if pick:
+                    votes[m["from"]] = pick
+                    bad.pop(m["from"], None)
+                else:
+                    bad[m["from"]] = v[-1].strip()
+        absent = [n for n in AUTO if n not in votes and n not in bad]
+        print("votes: " + (", ".join(f"{n} {v}" for n, v in votes.items()) or "none")
+              + (f"; invalid: {', '.join(f'{n} {v!r}' for n, v in bad.items())}" if bad else "")
+              + (f"; no vote: {', '.join(absent)}" if absent else ""))
         if votes and len(set(votes.values())) == 1 and set(votes) >= set(AUTO):
             print(f"CONSENSUS: {next(iter(votes.values()))}")
             return 0
@@ -1157,8 +1498,11 @@ def converse(via, to, text, options=None, rounds=1, timeout=1800.0):
             print("NO CONSENSUS")
             return 4
         body = (f"Round {rnd + 1}: no consensus yet (" + (", ".join(f"{n}: {v}" for n, v in votes.items())
-                or "no votes") + "). Read the others' reasons above, answer the strongest one you disagree with, "
-                "and vote again. " + vote)
+                or "no valid votes") + ")."
+                + (f" {', '.join('@' + n for n in list(bad) + absent)}: you gave no valid vote; you must vote this "
+                   "round, choosing one of the options exactly." if bad or absent else "")
+                + " Read the others' reasons above, answer the strongest one you disagree with, and vote again. "
+                + vote)
 
 
 def parse_dur(d):
@@ -1180,6 +1524,10 @@ def main():
     p.add_argument("--timeout", type=float, default=1800, help="with --via: give up after this many seconds")
     p.add_argument("-t", "--to", default="all"); p.add_argument("-f", "--file"); p.add_argument("text", nargs="*")
     p.add_argument("-q", "--no-follow", action="store_true", help="just post; don't open the live chat")
+    p.add_argument("--mode", choices=MODES, help="reply shape: short (default), audit or design (longer, structured "
+                   "findings), independent (every agent answers blind; the answers are revealed together, then "
+                   "cross-checked)")
+    p.add_argument("--independent", dest="mode", action="store_const", const="independent", help="= --mode independent")
     p = sp.add_parser("chat"); p.add_argument("-t", "--to", default="all")
     p.add_argument("--last", type=int, default=20, help="show this many earlier messages on joining")
     p = sp.add_parser("read"); p.add_argument("-a", "--as", dest="who"); p.add_argument("--new", action="store_true")
@@ -1223,7 +1571,7 @@ def main():
         if not text.strip():
             sys.exit("empty message")
         sys.exit(converse(a.via.lower(), a.to, text, [o.strip() for o in a.vote.split(",")] if a.vote else None,
-                          max(1, a.rounds), a.timeout))
+                          max(1, a.rounds), a.timeout, a.mode))
     if a.cmd == "post":
         if a.vote:
             sys.exit("--vote needs --via AGENT")
@@ -1234,7 +1582,12 @@ def main():
             return chat(a.to)
         text = (open(a.file).read() if a.file else sys.stdin.read() if a.text == ["-"] or not a.text
                 else " ".join(a.text))
-        m = post(a.who, a.to, text)
+        if a.mode and a.who.lower() != "user":
+            sys.exit("--mode is for the user's messages")
+        m = post(a.who, a.to, text, mode=a.mode)
+        if m.get("held"):
+            print(f"held: independent round #{m['held']} is open; your answer is revealed with the others'")
+            return
         if a.who.lower() in NAMES:
             seen(a.who.lower(), max(seen(a.who.lower()), m["id"]))
         print(f"posted #{m['id']}")
@@ -1302,7 +1655,8 @@ def main():
         print(f"synced {sync()} files to {CODE}")
     elif a.cmd in AGENTS:
         m = run_agent(a.cmd)
-        print("slept" if m == "slept" else f"posted #{m['id']}" if m else "no reply")
+        print("slept" if m == "slept" else f"held for independent round #{m['held']}" if m and m.get("held")
+              else f"posted #{m['id']}" if m else "no reply")
     elif a.cmd == "serve":
         import threading
         who = [x for x in (a.only.split(",") if a.only else AUTO)]
@@ -1312,32 +1666,51 @@ def main():
         print(f"serving {who} in parallel (budget {a.budget} agent msgs per user msg); Ctrl-C to stop", flush=True)
         working, lock = set(), threading.Lock()
 
-        def turn(name):
+        def turn(name, ids):
             try:
                 m = run_agent(name, do_sync=False)
                 print(f"{time.strftime('%H:%M:%S')} {name} -> " + ("asleep" if m == "slept" else
+                      f"held for round #{m['held']}" if m and m.get("held") else
                       f"#{m['id']}" if m else "failed"), flush=True)
-            except subprocess.TimeoutExpired:
-                print(f"{name} -> timed out", flush=True)
-            except Exception as e:  # keep serving the others
+            except Exception as e:  # keep serving the others; the messages stay unseen and are retried
+                f = note_failure(name, ids, None)
+                log_turn(name, ids, "failed", note=f"error {e!r}, try {f['tries']}/{MAX_TRIES}")
                 print(f"{name} -> error {e!r}", flush=True)
             finally:
                 busy(name, False)
                 with lock:
                     working.discard(name)
 
+        halted = os.path.join(STATE, "halted")   # present while the budget stops the agents (the chat shows it)
         while True:
+            reveal_due()
             msgs = load()
             todo = []
+            over = agent_streak(msgs) >= a.budget
+            if over != os.path.exists(halted):
+                if over:
+                    open(halted, "w").write(str(a.budget))
+                    print(f"budget reached ({a.budget} agent msgs since the user spoke); waiting for the user",
+                          flush=True)
+                    log_turn("serve", [msgs[-1]["id"]], "budget", note=f"{a.budget} agent messages")
+                else:
+                    os.unlink(halted)
             for name in who:
                 if name in working:
                     continue
                 pend = [m for m in msgs if m["id"] > seen(name) and for_me(m, name)]
-                if not pend:
+                if not pend or over:   # over budget: the messages stay unseen until the user speaks
                     continue
-                if agent_streak(msgs) >= a.budget:
-                    print(f"{name}: budget reached ({a.budget} agent msgs since the user spoke); waiting", flush=True)
-                    seen(name, msgs[-1]["id"])
+                f = failure(name)
+                if f and f["tries"] >= MAX_TRIES:   # give up on these messages, visibly
+                    seen(name, max(seen(name), max(f["ids"])))
+                    failure(name, clear=True)
+                    for q in open_rounds():
+                        hold_outcome(q, name, failed=True)
+                    log_turn(name, f["ids"], "gave up", note=f"after {f['tries']} failed tries")
+                    print(f"{name}: gave up on {f['ids']} after {f['tries']} failed tries", flush=True)
+                    continue
+                if f and time.time() < f["next"]:
                     continue
                 todo.append((name, pend))
             if todo:
@@ -1350,7 +1723,7 @@ def main():
                     busy(name, True)
                     with lock:
                         working.add(name)
-                    threading.Thread(target=turn, args=(name,), daemon=True).start()
+                    threading.Thread(target=turn, args=(name, [m["id"] for m in pend]), daemon=True).start()
             time.sleep(2)
     elif a.cmd == "reset":
         for n in (AGENTS if a.name == "all" else [a.name]):

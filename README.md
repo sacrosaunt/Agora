@@ -23,13 +23,15 @@ check the others rather than echo them.
 
 - **One shared thread.** Everything lives in `thread.jsonl` and is rendered to `thread.md`. Everyone sees every
   message; `-t` only decides who is expected to answer.
-- **Read-only snapshot.** Agents read a copy of your repo in `./code` (git-tracked files minus your excludes),
-  never the live tree, and never edit anything.
+- **Read-only snapshot.** Agents read a copy of your repo in `./code` (tracked and untracked-not-ignored files minus
+  your excludes, plus the git history), never the live tree, and never edit anything.
 - **Your logins, not API keys.** Each CLI runs on its own local login; agora strips `OPENAI_API_KEY`,
   `CODEX_API_KEY` and `ANTHROPIC_API_KEY` from their environment.
 - **Persistent sessions.** Each agent keeps one CLI session and is resumed with only the messages it hasn't seen.
 - **Quiet by default.** Agents with nothing new say `SLEEP`; questions to `all` get one lead answer (rotating
-  claude → codex → gemini) and the rest reply only with corrections.
+  claude → codex → gemini) and the rest reply only with corrections. `@all` asks everyone.
+- **Independent rounds.** `/independent` has every agent answer blind; the answers are revealed together and then
+  cross-checked, so nobody anchors on whoever spoke first.
 - **Live terminal chat** with markdown rendering, activity indicators and `@name` pings.
 
 ## Quick start
@@ -74,7 +76,9 @@ session? Leave it out of `"serve"` and run `./agora intro gemini` (or point your
 | Type                         | To                                                    |
 | ---------------------------- | ----------------------------------------------------- |
 | `@codex,claude your text`    | address a message (sticky until changed)              |
-| `… @gemini …`                | ping a sleeping agent from inside a message           |
+| `… @gemini …` · `… @all …`   | ping a sleeping agent (or everyone) from inside a message |
+| `/independent TEXT` (`/ind`) | everyone answers blind; answers revealed together, then cross-checked |
+| `/audit TEXT` · `/design TEXT` | ask for a longer, structured answer (summary, findings with evidence) |
 | `/to NAME`                   | set the recipients                                    |
 | `/sleep NAME [30m] [until NAME]` · `/wake NAME` | quiet or wake an agent             |
 | `/last N` · `/all`           | show earlier history                                  |
@@ -117,6 +121,10 @@ unfolds and returns once the agents have settled, and the agent follows up by po
 
 - With `--vote`, every agent ends its reply with `VOTE: <option>` and the votes are tallied. With `--rounds N`, a
   split vote goes back to the agents to answer each other's reasons, until they agree or the rounds run out.
+- `--independent` (or `--mode audit|design|independent`) works here too.
+- It returns once the question is answered: every agent asked has had its turn (posted, had nothing to add, or
+  failed for good) and nothing is pending. It then prints `SETTLED: <reason>` and each agent's outcome.
+- An invalid vote (not one of the options) or a missing one is reported, and the agent is pinged to vote again.
 - Exit codes: 0 settled (for a vote, consensus), 3 timed out, 4 no consensus.
 - Your own messages win over an agent's `via` message if the two conflict.
 
@@ -139,6 +147,8 @@ To teach an agent when and how to use it, install the skill, which has this agor
 | `project`    | project notes appended to the protocol                                     | `PROJECT.md`       |
 | `also`       | extra repos the agents may read, `{"name": "/path"}`, snapshotted to `./also/<name>` | `{}`      |
 | `serve`      | agents `serve` runs headlessly                                             | all three          |
+| `history`    | include the git history (`.git`) in the snapshots; it can hold files your excludes leave out | `true` |
+| `independent_timeout` | seconds before an independent round is revealed with whoever answered | `1200` |
 | `autoserve`  | joining the chat starts `agora serve` in the background if none is running | `true`             |
 | `max_turns`  | turns before a session rotates                                             | `40`               |
 | `max_tokens` | context size before a session rotates                                      | `300000`           |
@@ -161,6 +171,10 @@ A **fresh session** (full protocol + thread) starts deterministically when:
 - it reached `max_turns`, or its context passed `max_tokens` (the latest model call's input, not cumulative usage);
 - `PROTOCOL.md` or the project notes changed;
 - the previous turn failed.
+
+A failed turn leaves its messages unread: `serve` retries after 1, 2 and 4 minutes, then gives up on them, and the
+chat shows each failure. When the budget (400 agent messages since you last spoke) runs out, the agents stop and
+the messages wait for you.
 
 On a turn or token cap, the old session first writes a **private handoff note** (open questions, hypotheses,
 `path:line` facts) that goes into the fresh session's prompt.
