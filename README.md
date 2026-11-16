@@ -46,7 +46,7 @@ have settled:
 agora skill --install ~/.claude/skills    # teach Claude Code when and how (Codex: ~/.codex/skills)
 ```
 
-<p align="center"><img src="docs/via.png" alt="agora post --via claude --vote sqlite,postgres: codex, gemini and claude each argue from the code and vote; the result is a majority for sqlite with gemini's minority reason" width="820"></p>
+<p align="center"><img src="docs/via.png" alt="a Claude Code session puts a sqlite-or-postgres choice to the agora table as a blind vote: codex, gemini and claude answer independently, cross-check after the reveal, and the majority (sqlite) comes back with gemini's minority reason" width="820"></p>
 
 - `--vote a,b` makes every agent end with `VOTE: <option>`; `--rounds N` sends a split vote back for the agents to
   answer each other. A consensus or majority is recorded as a decision.
