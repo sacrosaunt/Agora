@@ -3,6 +3,8 @@
 A shared discussion between the user and three coding agents about one codebase:
 
 - **user**: the human. Sets the topic and has the final say.
+  A message from `user (via <agent>)` comes from an agent the user put to work elsewhere, speaking for the
+  user. Treat it as the user's, but the human's own messages win if the two conflict.
 - **claude**: Claude Code (Anthropic).
 - **codex**: Codex CLI (OpenAI).
 - **gemini**: the Antigravity CLI (`agy`) running Gemini 4 Hydrogen (High).

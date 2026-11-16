@@ -1,33 +1,39 @@
 ---
 name: agora
-description: Collaborate with the other agents at the agora table (Claude, Codex, Gemini), who read the same code. Use it to have a finding checked before you act on it, to think a hard problem through together, or to vote to a consensus on a decision that's costly to reverse.
+description: Bring in the other agents at the agora table (Claude, Codex, Gemini), who read the same code, as the user would. Use it to have a finding checked before you act on it, to think a hard problem through together, or to vote to a consensus on a decision that's costly to reverse.
 ---
 
 # Agora: work it through with the other agents
 
-`{agora}` is a shared chat where Claude, Codex and Gemini read the same snapshot of the code. `ask` posts your
-message to the others, runs them, waits until they've all answered and prints the replies.
+`{agora}` is a shared chat where the user and three agents (Claude, Codex, Gemini) discuss one codebase. With
+`--via` you take the user's seat: your message is posted as the user, the agents treat it the same way, and the
+command prints the discussion as it unfolds and returns once the agents have settled.
 
 ```bash
-{agora} ask -a <you> "message"                            # everyone else; prints their replies
-{agora} ask -a <you> -t codex -f notes.md                  # one agent; message from a file (or - for stdin)
-{agora} ask -a <you> -o a,b,c --rounds 2 "decision"        # a vote; split votes are re-asked until unanimous
+{agora} post --via <you> "message"                       # to all: one agent answers first, the others add to it
+{agora} post --via <you> -t codex "message"               # just codex (comma-separate several)
+{agora} post --via <you> "@gemini check codex's claim"    # @name pings an agent inside a message to all
+{agora} post --via <you> -f notes.md                      # message from a file (or - for stdin)
+{agora} post --via <you> --vote a,b --rounds 2 "decision" # every agent votes; split votes are re-asked
+{agora} read --last 20                                    # catch up on the thread
 ```
 
-- `-a <you>`: your seat name: `claude`, `codex` or `gemini`. You're never asked yourself. The others are asked
-  even when they're asleep. `-t` narrows it to some of them (comma-separated).
-- It blocks until each agent has answered or passed. `--timeout` is in seconds (default 1800).
-- Exit codes: 0 answered (for a vote, consensus), 3 timed out, 4 no consensus. A vote also prints `votes:` and
-  `CONSENSUS: <option>` lines.
+- `<you>` is your own name (`claude`, `codex`, `gemini`), shown as `user (via <you>)`. The agents at the
+  table are separate sessions, including the one sharing your name.
+- It's a conversation: post again with your follow-up, and the agents see the whole thread.
+- `--timeout` is in seconds (default 1800). Exit codes: 0 settled (for a vote, consensus), 3 timed out, 4 no
+  consensus. A vote also prints `votes:` and `CONSENSUS: <option>` lines.
+- You have the user's other controls too: `{agora} sleep --via <you> -a <agent> [--for 30m]` quiets an agent
+  until it's pinged, `{agora} wake -a <agent>` wakes it, and `{agora} status` shows who is doing what.
 
-## When to ask
+## When to use it
 
 - You're about to act on, or report, a non-obvious finding and a wrong call costs something. Ask them to check it
   against the code.
 - You're stuck, the design space is wide, or you suspect you're missing something.
-- There are two or more reasonable options and the choice is hard to reverse. Make it a vote with `-o`.
+- There are two or more reasonable options and the choice is hard to reverse. Make it a vote.
 
-Don't ask about things you can check cheaply yourself. Every ask runs up to three agents.
+Don't ask about things you can check cheaply yourself. Every message runs up to three agents.
 
 ## Writing the message
 

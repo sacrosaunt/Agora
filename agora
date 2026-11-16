@@ -32,10 +32,10 @@ private handoff note (open questions, hypotheses, path:line facts) that goes int
                                          the thread and posts what you type
   agora read [-a NAME] [--new] [--last N] [--json]   --new: only unseen messages for NAME, then mark them seen
   agora wait -a NAME [--timeout S]       block until a message for NAME arrives, print it, mark seen
-  agora ask -a NAME [-t to] [-o a,b [--rounds N]] [--timeout S] [TEXT | -f FILE | -]
-                                         post to the others, wait until they've all answered, print the replies;
-                                         -o makes it a vote (tallied, re-asked until unanimous)
-  agora skill [--install DIR]            print the agent skill for `ask` (or write DIR/agora/SKILL.md)
+  agora post --via AGENT [-t to] [--vote a,b [--rounds N]] [--timeout S] [TEXT | -f FILE | -]
+                                         an agent speaking for the user: posts as the user, prints the discussion
+                                         as it happens and returns once the agents settle; --vote polls every agent
+  agora skill [--install DIR]            print the agent skill for `post --via` (or write DIR/agora/SKILL.md)
   agora doing -a NAME [--id ID [--bg] [--done]] TEXT   show what NAME is doing in the chat (phase, or one of
                                          several concurrent actions); wait sets it, posting clears it
   agora idle -a NAME                     clear NAME's activity
@@ -107,6 +107,10 @@ def protocol():
 BUDGET = 400  # max agent messages since the last user message before Codex stops auto-replying
 
 
+def author(m):
+    return m["from"] + (f" (via {m['via']})" if m.get("via") else "")
+
+
 def load():
     if not os.path.exists(THREAD):
         return []
@@ -117,14 +121,15 @@ def load():
 def render(msgs):
     out = ["# Agora thread\n", "Read-only codebase snapshot: `" + CODE + "`. Protocol: `agora protocol`.\n"]
     for m in msgs:
-        out.append(f"\n---\n### #{m['id']} {m['from']} → {', '.join(m['to'])} · {m['ts']}\n\n{m['text'].rstrip()}\n")
+        out.append(f"\n---\n### #{m['id']} {author(m)} → {', '.join(m['to'])} · {m['ts']}\n\n{m['text'].rstrip()}\n")
     tmp = MD + ".tmp"
     with open(tmp, "w") as f:
         f.writelines(out)
     os.replace(tmp, MD)
 
 
-def post(frm, to, text):
+def post(frm, to, text, via=None):
+    """via: an agent posting as the user on the user's behalf (agora post --via NAME)."""
     frm = frm.lower()
     if frm not in NAMES:
         sys.exit(f"unknown author {frm!r}; use one of {NAMES}")
@@ -140,6 +145,8 @@ def post(frm, to, text):
         f.seek(0)
         n = sum(1 for l in f if l.strip())
         m = {"id": n + 1, "from": frm, "to": to, "ts": time.strftime("%Y-%m-%d %H:%M:%S"), "text": text}
+        if via:
+            m["via"] = via
         f.write(json.dumps(m, ensure_ascii=False) + "\n")
         f.flush()
         fcntl.flock(f, fcntl.LOCK_UN)
@@ -235,7 +242,7 @@ def seen(name, val=None):
 
 
 def fmt(m):
-    return f"### #{m['id']} {m['from']} → {', '.join(m['to'])} · {m['ts']}\n\n{m['text'].rstrip()}\n"
+    return f"### #{m['id']} {author(m)} → {', '.join(m['to'])} · {m['ts']}\n\n{m['text'].rstrip()}\n"
 
 
 def sync():
@@ -931,7 +938,7 @@ def chat(to="all", after=None):
         return re.sub(r"(?<![\w@])@(" + "|".join(NAMES + ("all",)) + r")\b", hl, out, flags=re.I)
 
     def show(m):
-        head = col(COLORS.get(m["from"], "0"), f"── #{m['id']} {m['from']}") + col("2", f" → {', '.join(m['to'])} · {m['ts'][11:]}")
+        head = col(COLORS.get(m["from"], "0"), f"── #{m['id']} {author(m)}") + col("2", f" → {', '.join(m['to'])} · {m['ts'][11:]}")
         emit(head + "\n" + pings(md(m["text"])))
 
     def md(text):
@@ -1072,67 +1079,60 @@ VOTE_ASK = "Pick one of: {opts}. Say why in a few lines, and end with a line `VO
 VOTE = re.compile(r"^\W*VOTE:\s*(.+?)\W*$", re.I | re.M)
 
 
-def ask(who, to, text, options=None, rounds=1, timeout=1800.0):
-    """Post to the other agents, block until each addressed served agent has answered or passed, and print the
-    replies. With options it's a vote: tally the VOTE lines and re-ask up to `rounds` times until unanimous.
-    Returns an exit code: 0 answered (vote: consensus), 3 timed out, 4 vote without consensus."""
-    who = who.lower()
-    names = [n for n in (AGENTS if to in (None, "", "all") else [t.strip().lower() for t in to.split(",")])
-             if n != who]   # named explicitly, so sleepers are pinged
-    if not names or any(n not in NAMES for n in names):
-        sys.exit(f"ask: recipients must be among {NAMES} and not yourself")
+def settle(after, timeout, show=print):
+    """Stream messages after id `after` until the served agents have nothing left to answer and none is working
+    (checked twice, a few seconds apart), or until timeout. Returns (messages, timed_out)."""
+    t0, shown, calm = time.time(), after, 0
+    while True:
+        msgs = load()
+        for m in msgs:
+            if m["id"] > shown:
+                show(fmt(m)); shown = m["id"]
+        work = busy_now()
+        live = [n for n in AUTO if n in work or any(m["id"] > seen(n) and for_me(m, n) for m in msgs)]
+        calm = 0 if live else calm + 1
+        if calm >= 3:
+            return [m for m in msgs if m["id"] > after], False
+        if time.time() - t0 > timeout:
+            print(f"timed out after {timeout:.0f}s; still working: {', '.join(live)}", file=sys.stderr)
+            return [m for m in msgs if m["id"] > after], True
+        time.sleep(2)
+
+
+def converse(via, to, text, options=None, rounds=1, timeout=1800.0):
+    """An agent speaking for the user: post as the user, then follow the discussion it starts until it settles.
+    With options it's a vote of every agent, re-asked up to `rounds` times until unanimous.
+    Exit code: 0 settled (vote: consensus), 3 timed out, 4 vote without consensus."""
     ensure_serve()
-    expect = [n for n in names if n in AUTO]
-    if not expect:
-        print(f"note: none of {names} is run by `agora serve` here; waiting for a manual answer", file=sys.stderr)
+    if not AUTO:
+        print("note: no agents are run by `agora serve` here; nothing will answer automatically", file=sys.stderr)
+    if options:
+        to = ",".join(AGENTS)   # named explicitly: everyone votes, sleepers included, no lead-answer turns
     vote = VOTE_ASK.format(opts=", ".join(options)) if options else ""
-    body, out, timed_out = text.strip() + ("\n\n" + vote if vote else ""), [], False
+    body = text.strip() + ("\n\n" + vote if vote else "")
     for rnd in range(1, rounds + 1):
-        q = post(who, ",".join(names), body)
-        seen(who, max(seen(who), q["id"]))
-        print(f"asked #{q['id']} of {', '.join(names)}; waiting…", file=sys.stderr, flush=True)
-        t0, got = time.time(), {}
-        while True:
-            msgs = [m for m in load() if m["id"] > q["id"]]
-            for m in msgs:
-                if m["from"] in names and m["from"] not in got:
-                    got[m["from"]] = m
-            work = busy_now()
-            done = [n for n in expect if n in got or (seen(n) >= q["id"] and n not in work)]
-            if (expect and len(done) == len(expect)) or (not expect and got):
-                break
-            if time.time() - t0 > timeout:
-                timed_out = True
-                print(f"timed out after {timeout:.0f}s; still waiting on "
-                      + ", ".join(n for n in expect if n not in done), file=sys.stderr)
-                break
-            time.sleep(2)
-        msgs = [m for m in load() if m["id"] > q["id"]]
-        if msgs:
-            seen(who, max(seen(who), msgs[-1]["id"]))
-        out += msgs
-        print(f"\n## round {rnd}: #{q['id']}\n" if rounds > 1 else "", end="")
-        print("\n".join(fmt(m) for m in msgs) or "(no replies)")
-        quiet = [n for n in expect if n not in got]
-        if quiet:
-            print(f"no reply (nothing to add, or failed: see state/<name>.log): {', '.join(quiet)}")
+        q = post("user", to, body, via=via)
+        print(f"posted #{q['id']} as user via {via}; following the discussion…", file=sys.stderr, flush=True)
+        new, out = settle(q["id"], timeout)
+        if out:
+            return 3
         if not options:
-            break
-        votes = {n: VOTE.findall(m["text"])[-1].strip().strip("`*").lower() for n, m in got.items()
-                 if VOTE.findall(m["text"])}
+            return 0
+        votes = {}
+        for m in new:
+            v = VOTE.findall(m["text"])
+            if m["from"] in AGENTS and v:
+                votes[m["from"]] = v[-1].strip().strip("`*").lower()
         print("votes: " + (", ".join(f"{n} {v}" for n, v in votes.items()) or "none"))
-        if votes and len(set(votes.values())) == 1 and len(votes) == len(got) and set(got) >= set(expect):
+        if votes and len(set(votes.values())) == 1 and set(votes) >= set(AUTO):
             print(f"CONSENSUS: {next(iter(votes.values()))}")
-            break
+            return 0
         if rnd == rounds:
             print("NO CONSENSUS")
-            sleep_set(who, False)
             return 4
         body = (f"Round {rnd + 1}: no consensus yet (" + (", ".join(f"{n}: {v}" for n, v in votes.items())
                 or "no votes") + "). Read the others' reasons above, answer the strongest one you disagree with, "
                 "and vote again. " + vote)
-    sleep_set(who, False)   # posting to agents put the asker to sleep; an ask is over when it returns
-    return 3 if timed_out else 0
 
 
 def parse_dur(d):
@@ -1146,7 +1146,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--last", type=int, help="with no command: join the chat showing this many earlier messages (default 20)")
     sp = ap.add_subparsers(dest="cmd")
-    p = sp.add_parser("post"); p.add_argument("-a", "--as", dest="who", required=True)
+    p = sp.add_parser("post"); p.add_argument("-a", "--as", dest="who")
+    p.add_argument("--via", metavar="AGENT", help="an agent posting as the user: follows the discussion it starts "
+                   "and prints it, returning once the agents have settled")
+    p.add_argument("--vote", metavar="A,B", help="with --via: every agent votes between these options")
+    p.add_argument("--rounds", type=int, default=1, help="with --vote: re-ask up to N rounds until unanimous")
+    p.add_argument("--timeout", type=float, default=1800, help="with --via: give up after this many seconds")
     p.add_argument("-t", "--to", default="all"); p.add_argument("-f", "--file"); p.add_argument("text", nargs="*")
     p.add_argument("-q", "--no-follow", action="store_true", help="just post; don't open the live chat")
     p = sp.add_parser("chat"); p.add_argument("-t", "--to", default="all")
@@ -1156,11 +1161,6 @@ def main():
     p = sp.add_parser("wait"); p.add_argument("-a", "--as", dest="who", required=True)
     p.add_argument("--timeout", type=float, default=0)
     p.add_argument("--until", help="block until this participant (e.g. codex) posts, or you are pinged")
-    p = sp.add_parser("ask", help="post to the other agents, wait for all their replies and print them (-o: vote)")
-    p.add_argument("-a", "--as", dest="who", required=True); p.add_argument("-t", "--to", default="all")
-    p.add_argument("-o", "--options", help="make it a vote between these comma-separated choices")
-    p.add_argument("--rounds", type=int, default=1, help="vote: re-ask up to N rounds until unanimous")
-    p.add_argument("--timeout", type=float, default=1800); p.add_argument("-f", "--file"); p.add_argument("text", nargs="*")
     p = sp.add_parser("skill", help="print the agent skill (SKILL.md) with this agora's paths, or install it")
     p.add_argument("--install", metavar="DIR", help="write DIR/agora/SKILL.md (e.g. ~/.claude/skills)")
     p = sp.add_parser("idle"); p.add_argument("-a", "--as", dest="who", required=True)
@@ -1172,6 +1172,7 @@ def main():
     p = sp.add_parser("sleep", help="stop answering messages to all until pinged (@name or -t name)")
     p.add_argument("-a", "--as", dest="who", required=True); p.add_argument("--for", dest="dur", help="e.g. 30m, 2h")
     p.add_argument("--until", help="also wake when this participant (e.g. codex) posts next")
+    p.add_argument("--via", metavar="AGENT", help="put another agent to sleep for the user, like /sleep in the chat")
     p.add_argument("why", nargs="*")
     p = sp.add_parser("wake"); p.add_argument("-a", "--as", dest="who", required=True)
     p = sp.add_parser("hook", help="Claude Code tool hook (reads hook JSON on stdin)"); p.add_argument("phase", choices=["pre", "post"])
@@ -1188,7 +1189,20 @@ def main():
         msgs = load()
         last = a.last if a.last is not None else 20
         return chat(getattr(a, "to", "all"), after=msgs[-min(last, len(msgs))]["id"] - 1 if msgs and last else None)
+    if a.cmd == "post" and a.via:
+        if a.who and a.who.lower() != "user":
+            sys.exit("--via posts as the user; drop -a")
+        text = (open(a.file).read() if a.file else sys.stdin.read() if a.text == ["-"] or not a.text
+                else " ".join(a.text))
+        if not text.strip():
+            sys.exit("empty message")
+        sys.exit(converse(a.via.lower(), a.to, text, [o.strip() for o in a.vote.split(",")] if a.vote else None,
+                          max(1, a.rounds), a.timeout))
     if a.cmd == "post":
+        if a.vote:
+            sys.exit("--vote needs --via AGENT")
+        if not a.who:
+            sys.exit("post needs -a NAME (or --via AGENT to post as the user)")
         live = a.who.lower() == "user" and not a.no_follow and sys.stdin.isatty() and sys.stdout.isatty()
         if live and not a.text and not a.file:
             return chat(a.to)
@@ -1228,13 +1242,6 @@ def main():
             if a.timeout and time.time() - t0 > a.timeout:
                 sys.exit(3)
             time.sleep(2)
-    elif a.cmd == "ask":
-        text = (open(a.file).read() if a.file else sys.stdin.read() if a.text == ["-"] or not a.text
-                else " ".join(a.text))
-        if not text.strip():
-            sys.exit("ask: empty question")
-        sys.exit(ask(a.who, a.to, text, [o.strip() for o in a.options.split(",")] if a.options else None,
-                     max(1, a.rounds), a.timeout))
     elif a.cmd == "skill":
         s = template(os.path.join("skills", "agora", "SKILL.md"), agora=os.path.realpath(__file__))
         if not a.install:
@@ -1254,7 +1261,7 @@ def main():
             busy(a.who.lower(), True, " ".join(a.text) or "thinking")
     elif a.cmd == "sleep":
         wf = a.until.lower().split(",") if a.until else []
-        sleep_set(a.who.lower(), True, parse_dur(a.dur), " ".join(a.why), wf)
+        sleep_set(a.who.lower(), True, parse_dur(a.dur), "user" if a.via else " ".join(a.why), wf)
         print(f"{a.who} sleeps until pinged" + (f" or {a.until} posts" if wf else "") + (f" or {a.dur} pass" if a.dur else ""))
     elif a.cmd == "wake":
         sleep_set(a.who.lower(), False)
