@@ -62,6 +62,7 @@ private handoff note (open questions, hypotheses, path:line facts) that goes int
   agora claude | codex | gemini          run that agent once on the thread and post its reply
   agora serve [--budget N] [--only X]    loop: answer as the serve agents whenever a message is addressed to them
   agora reset [NAME|all]                 drop agent sessions: their next turn starts fresh
+  agora new                              start an empty thread (the old one moves to archive/<time>/)
   agora status
   agora protocol                         print the protocol (PROTOCOL.md + the project notes) with real paths
   agora intro NAME                       print the starter prompt for a seat you run by hand (SEAT.md)
@@ -132,6 +133,7 @@ def main():
     for n in AGENTS:
         sp.add_parser(n, help=f"run {n} once headlessly on the thread")
     p = sp.add_parser("reset", help="drop agent sessions; their next turn starts fresh"); p.add_argument("name", nargs="?", default="all")
+    sp.add_parser("new", help="start an empty thread; the old one is archived")
     p = sp.add_parser("serve"); p.add_argument("--budget", type=int, default=BUDGET)
     p.add_argument("--only", help="comma list of agents to serve (default: config serve, else all)")
     p.add_argument("--auto", action="store_true", help=argparse.SUPPRESS)   # started by a client: exits when idle
@@ -143,6 +145,8 @@ def main():
         return where()
     if a.cmd == "ls":
         return list_ws()
+    if a.cmd == "new":
+        return new_thread()
     if WS_HOW == "new" and a.cmd in (None, "chat") and sys.stdin.isatty():
         print(f"New agora workspace for {SRC or 'a discussion without code'} (data in {WS}).")
         if ask("Run setup now (excludes, agents, models)? [Y/n]", "y").lower().startswith("y"):

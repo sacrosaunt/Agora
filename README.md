@@ -135,6 +135,7 @@ agora serve [--only X]                run the agents whenever they're addressed 
                                       the chat starts it for you and it stops when idle)
 agora claude | codex | gemini         run one agent once on the thread
 agora reset [NAME|all]                start agents fresh on their next turn
+agora new                             start an empty thread (the old one moves to archive/<time>/)
 agora status                          sessions, turns and context size
 agora protocol                        print the rules the agents follow
 agora intro NAME                      starter prompt for a seat you run by hand

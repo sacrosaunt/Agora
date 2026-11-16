@@ -168,4 +168,67 @@ def serve_loop(a):
         time.sleep(2)
 
 
+def stop_serve():
+    """Stop this workspace's serve (and the agent turns it is running). True once none holds the serve lock."""
+    f = serve_lock()
+    if f is not None:
+        f.close()
+        return True
+    try:
+        pid = int(open(os.path.join(STATE, "serve.lock")).read().strip())
+    except (OSError, ValueError):
+        return False
+    if WINDOWS:   # the whole tree: the serve and the agent CLIs it started
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True)
+    else:
+        import signal
+        try:   # an auto-started serve leads its own process group, which its agent runs share
+            os.killpg(pid, signal.SIGTERM) if os.getpgid(pid) == pid else os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    for _ in range(100):
+        time.sleep(0.1)
+        f = serve_lock()
+        if f is not None:
+            f.close()
+            return True
+    return False
+
+
+def new_thread():
+    """`agora new`: archive the thread with its per-thread state (seen marks, sessions, rounds, sleeps, failures,
+    logs, agents' work dirs) under archive/<time>/ and start an empty thread. Setup, project notes and the code
+    snapshot stay."""
+    cl = lockfile("clients.lock")
+    if not lock(cl, block=False):
+        cl.close()
+        sys.exit("an agora chat or wait is open on this workspace; close it (/quit) and run `agora new` again")
+    try:
+        if not stop_serve():
+            sys.exit("couldn't stop this workspace's serve (pid in state/serve.lock); stop it and try again")
+        if not os.path.exists(THREAD) or not load():
+            print("the thread is already empty")
+            return
+        dest = os.path.join(WS, "archive", time.strftime("%Y%m%d-%H%M%S"))
+        keep = {"plain.git", "snapshot.json", "serve.json"}   # the snapshot's history and the serve options
+        moves = [(p, os.path.join(dest, os.path.basename(p))) for p in (THREAD, MD) if os.path.exists(p)]
+        if os.path.isdir(os.path.join(WS, "work")):
+            moves.append((os.path.join(WS, "work"), os.path.join(dest, "work")))
+        for root, dirs, files in os.walk(STATE):
+            rel = os.path.relpath(root, STATE)
+            if rel == ".":
+                dirs[:] = [d for d in dirs if d not in keep]
+            moves += [(os.path.join(root, n), os.path.join(dest, "state", rel, n)) for n in files
+                      if not n.endswith(".lock") and not (rel == "." and n in keep)]
+        for src, dst in moves:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            rename(src, dst)
+        for root, dirs, files in os.walk(STATE, topdown=False):   # drop the emptied dirs (lock files stay)
+            if root != STATE and not os.listdir(root):
+                os.rmdir(root)
+        print(f"new thread; the old one is in {dest}")
+    finally:
+        cl.close()
+
+
 __all__ = [k for k in list(globals()) if not k.startswith("__")]
