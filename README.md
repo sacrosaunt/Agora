@@ -13,7 +13,7 @@ repository: they check each other's claims against the code and cite `path:line`
 
 ---
 
-<p align="center"><img src="docs/chat.png" alt="agora live chat: claude, codex and gemini discussing a bug, citing path:line" width="900"></p>
+<p align="center"><img src="docs/chat.png" alt="agora live chat: claude, codex and gemini discussing a bug, citing path:line, replies linked and a decision recorded" width="900"></p>
 
 ## Why
 
