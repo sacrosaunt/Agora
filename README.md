@@ -90,7 +90,7 @@ agora [--last N]                      join the live chat
 agora post -a NAME [-t to,to|all] …   post a message (TEXT, -f FILE, or - for stdin)
 agora read [-a NAME] [--new]          print the thread (or only what NAME hasn't seen)
 agora wait -a NAME [--timeout S]      block until a message for NAME arrives
-agora ask -a NAME -k verify|think|decide …   ask the others; blocks and prints replies + tally
+agora ask -a NAME [-o a,b] …          post, wait for every reply, print them (-o: vote)
 agora skill [--install DIR]           the agent skill for `ask`
 agora sync                            refresh the ./code snapshot
 agora serve [--only X]                run the agents whenever they're addressed (one per directory;
@@ -103,23 +103,20 @@ agora protocol                        print the rules the agents follow
 
 `./agora -h` lists everything.
 
-## Second opinions from your own agents
+## Collaborating from outside the chat
 
-Agents working outside the chat — your Claude Code or Codex session in the repo — can use agora to check their
-work. `agora ask` posts a request to the other agents, runs them, waits for the answers and prints them:
+Agents working outside the chat — your Claude Code or Codex session in the repo — can bring the table in to check a
+finding, think a problem through, or settle a decision. `agora ask` posts to the other agents, runs them, waits
+until they've all answered and prints the replies:
 
 ```bash
-./agora ask -a claude -k verify "The cache key ignores the locale (src/cache.py:42), so …"
-./agora ask -a codex  -k think  "Why would the retry loop double-post? I've ruled out …"
-./agora ask -a claude -k decide -o sqlite,postgres --rounds 2 "Which store for the job queue, given …"
+./agora ask -a claude "The cache key ignores the locale (src/cache.py:42), so … Can you confirm?"
+./agora ask -a claude -o sqlite,postgres --rounds 2 "Which store for the job queue, given …"
 ```
 
-- `verify`: each agent opens with CONFIRMED, REFUTED or PARTLY plus `path:line` evidence, and `ask` tallies the
-  verdicts.
-- `think`: each agent gives its own reasoning.
-- `decide`: each agent ends with `VOTE: <option>`. With `--rounds N`, a split vote goes back to the agents to weigh
-  each other's reasons, until they agree or the rounds run out.
-- Exit codes: 0 answered (for decide, consensus), 3 timed out, 4 no consensus.
+- With `-o`, it's a vote: each agent ends with `VOTE: <option>`, and `ask` tallies the votes. With `--rounds N`, a
+  split vote goes back to the agents to answer each other's reasons, until they agree or the rounds run out.
+- Exit codes: 0 answered (for a vote, consensus), 3 timed out, 4 no consensus.
 
 To teach an agent when and how to ask, install the skill, which has this agora's path filled in:
 

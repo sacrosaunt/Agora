@@ -32,9 +32,9 @@ private handoff note (open questions, hypotheses, path:line facts) that goes int
                                          the thread and posts what you type
   agora read [-a NAME] [--new] [--last N] [--json]   --new: only unseen messages for NAME, then mark them seen
   agora wait -a NAME [--timeout S]       block until a message for NAME arrives, print it, mark seen
-  agora ask -a NAME [-t to] [-k verify|think|decide] [-o a,b] [--rounds N] [--timeout S] [TEXT | -f FILE | -]
-                                         ask the others to verify a finding, think something through, or vote on a
-                                         decision; blocks until they answer and prints the replies and the tally
+  agora ask -a NAME [-t to] [-o a,b [--rounds N]] [--timeout S] [TEXT | -f FILE | -]
+                                         post to the others, wait until they've all answered, print the replies;
+                                         -o makes it a vote (tallied, re-asked until unanimous)
   agora skill [--install DIR]            print the agent skill for `ask` (or write DIR/agora/SKILL.md)
   agora doing -a NAME [--id ID [--bg] [--done]] TEXT   show what NAME is doing in the chat (phase, or one of
                                          several concurrent actions); wait sets it, posting clears it
@@ -1068,21 +1068,14 @@ def chat(to="all", after=None):
     state["stop"] = True
 
 
-ASK_KINDS = {
-    "verify": "**Verify request.** Check this against the code yourself. First line exactly `CONFIRMED`, `REFUTED` or "
-              "`PARTLY`, then the evidence (`path:line`) in a few lines.",
-    "think": "**Thinking request.** Work through this and give your own view: the answer, what I'm missing, the "
-             "risks. Cite `path:line` where the code matters.",
-    "decide": "**Decision request.** Pick one option and say why in a few lines. Last line exactly `VOTE: <option>`.",
-}
-VERDICT = re.compile(r"^\W*(CONFIRMED|REFUTED|PARTLY)\b", re.I | re.M)
+VOTE_ASK = "Pick one of: {opts}. Say why in a few lines, and end with a line `VOTE: <option>`."
 VOTE = re.compile(r"^\W*VOTE:\s*(.+?)\W*$", re.I | re.M)
 
 
-def ask(who, to, kind, text, options=None, rounds=1, timeout=1800.0):
-    """Post a request to the other agents, block until each addressed served agent has answered or gone quiet,
-    print the replies and (verify/decide) a tally. Returns an exit code: 0 answered (decide: consensus), 3 timed
-    out, 4 decide without consensus."""
+def ask(who, to, text, options=None, rounds=1, timeout=1800.0):
+    """Post to the other agents, block until each addressed served agent has answered or passed, and print the
+    replies. With options it's a vote: tally the VOTE lines and re-ask up to `rounds` times until unanimous.
+    Returns an exit code: 0 answered (vote: consensus), 3 timed out, 4 vote without consensus."""
     who = who.lower()
     names = [n for n in (AGENTS if to in (None, "", "all") else [t.strip().lower() for t in to.split(",")])
              if n != who]   # named explicitly, so sleepers are pinged
@@ -1092,12 +1085,12 @@ def ask(who, to, kind, text, options=None, rounds=1, timeout=1800.0):
     expect = [n for n in names if n in AUTO]
     if not expect:
         print(f"note: none of {names} is run by `agora serve` here; waiting for a manual answer", file=sys.stderr)
-    head = ASK_KINDS[kind] + (f" Options: {', '.join(options)}." if options else "")
-    body, out, timed_out = head + "\n\n" + text.strip(), [], False
+    vote = VOTE_ASK.format(opts=", ".join(options)) if options else ""
+    body, out, timed_out = text.strip() + ("\n\n" + vote if vote else ""), [], False
     for rnd in range(1, rounds + 1):
         q = post(who, ",".join(names), body)
         seen(who, max(seen(who), q["id"]))
-        print(f"asked #{q['id']} ({kind}) of {', '.join(names)}; waiting…", file=sys.stderr, flush=True)
+        print(f"asked #{q['id']} of {', '.join(names)}; waiting…", file=sys.stderr, flush=True)
         t0, got = time.time(), {}
         while True:
             msgs = [m for m in load() if m["id"] > q["id"]]
@@ -1123,11 +1116,7 @@ def ask(who, to, kind, text, options=None, rounds=1, timeout=1800.0):
         quiet = [n for n in expect if n not in got]
         if quiet:
             print(f"no reply (nothing to add, or failed: see state/<name>.log): {', '.join(quiet)}")
-        if kind == "verify":
-            tally = {n: (VERDICT.search(m["text"]).group(1).upper() if VERDICT.search(m["text"]) else "?")
-                     for n, m in got.items()}
-            print("verdicts: " + (", ".join(f"{n} {v}" for n, v in tally.items()) or "none"))
-        if kind != "decide":
+        if not options:
             break
         votes = {n: VOTE.findall(m["text"])[-1].strip().strip("`*").lower() for n, m in got.items()
                  if VOTE.findall(m["text"])}
@@ -1139,9 +1128,9 @@ def ask(who, to, kind, text, options=None, rounds=1, timeout=1800.0):
             print("NO CONSENSUS")
             sleep_set(who, False)
             return 4
-        body = (ASK_KINDS["decide"] + " Round " + str(rnd + 1) + ": no consensus yet ("
-                + (", ".join(f"{n}: {v}" for n, v in votes.items()) or "no votes") + "). Read the others' reasons "
-                "above, answer the strongest one you disagree with, and vote again.")
+        body = (f"Round {rnd + 1}: no consensus yet (" + (", ".join(f"{n}: {v}" for n, v in votes.items())
+                or "no votes") + "). Read the others' reasons above, answer the strongest one you disagree with, "
+                "and vote again. " + vote)
     sleep_set(who, False)   # posting to agents put the asker to sleep; an ask is over when it returns
     return 3 if timed_out else 0
 
@@ -1167,11 +1156,10 @@ def main():
     p = sp.add_parser("wait"); p.add_argument("-a", "--as", dest="who", required=True)
     p.add_argument("--timeout", type=float, default=0)
     p.add_argument("--until", help="block until this participant (e.g. codex) posts, or you are pinged")
-    p = sp.add_parser("ask", help="ask the other agents to verify, think or decide; blocks and prints their replies")
+    p = sp.add_parser("ask", help="post to the other agents, wait for all their replies and print them (-o: vote)")
     p.add_argument("-a", "--as", dest="who", required=True); p.add_argument("-t", "--to", default="all")
-    p.add_argument("-k", "--kind", choices=list(ASK_KINDS), default="think")
-    p.add_argument("-o", "--options", help="decide: comma-separated choices")
-    p.add_argument("--rounds", type=int, default=1, help="decide: re-vote up to N rounds until unanimous")
+    p.add_argument("-o", "--options", help="make it a vote between these comma-separated choices")
+    p.add_argument("--rounds", type=int, default=1, help="vote: re-ask up to N rounds until unanimous")
     p.add_argument("--timeout", type=float, default=1800); p.add_argument("-f", "--file"); p.add_argument("text", nargs="*")
     p = sp.add_parser("skill", help="print the agent skill (SKILL.md) with this agora's paths, or install it")
     p.add_argument("--install", metavar="DIR", help="write DIR/agora/SKILL.md (e.g. ~/.claude/skills)")
@@ -1245,7 +1233,7 @@ def main():
                 else " ".join(a.text))
         if not text.strip():
             sys.exit("ask: empty question")
-        sys.exit(ask(a.who, a.to, a.kind, text, [o.strip() for o in a.options.split(",")] if a.options else None,
+        sys.exit(ask(a.who, a.to, text, [o.strip() for o in a.options.split(",")] if a.options else None,
                      max(1, a.rounds), a.timeout))
     elif a.cmd == "skill":
         s = template(os.path.join("skills", "agora", "SKILL.md"), agora=os.path.realpath(__file__))

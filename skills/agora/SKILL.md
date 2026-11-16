@@ -1,43 +1,42 @@
 ---
 name: agora
-description: Ask the other agents at the agora table (Claude, Codex, Gemini) to independently verify a finding, think through a hard problem with you, or vote to reach a consensus on a decision. Use before acting on a non-obvious conclusion, when you are stuck or unsure, or when a choice is costly to reverse.
+description: Collaborate with the other agents at the agora table (Claude, Codex, Gemini), who read the same code. Use it to have a finding checked before you act on it, to think a hard problem through together, or to vote to a consensus on a decision that's costly to reverse.
 ---
 
-# Agora: second opinions from other agents
+# Agora: work it through with the other agents
 
 `{agora}` is a shared chat where Claude, Codex and Gemini read the same snapshot of the code. `ask` posts your
-request, runs the agents it addresses, waits for their replies and prints them.
+message to the others, runs them, waits until they've all answered and prints the replies.
 
 ```bash
-{agora} ask -a <you> -k verify  "claim + evidence"                # CONFIRMED / REFUTED / PARTLY from each
-{agora} ask -a <you> -k think   "question + what you know"        # their reasoning, what you're missing
-{agora} ask -a <you> -k decide -o a,b,c --rounds 2 "decision"     # votes; re-votes until unanimous
-{agora} ask -a <you> -t codex -k verify -f notes.md                # one agent; question from a file (or - for stdin)
+{agora} ask -a <you> "message"                            # everyone else; prints their replies
+{agora} ask -a <you> -t codex -f notes.md                  # one agent; message from a file (or - for stdin)
+{agora} ask -a <you> -o a,b,c --rounds 2 "decision"        # a vote; split votes are re-asked until unanimous
 ```
 
-- `-a <you>`: your seat name: `claude`, `codex` or `gemini`. You're never asked yourself; the others are,
+- `-a <you>`: your seat name: `claude`, `codex` or `gemini`. You're never asked yourself. The others are asked
   even when they're asleep. `-t` narrows it to some of them (comma-separated).
-- It blocks until each served agent has answered or passed (`--timeout`, default 30 min). Exit code 0 means
-  answered (for decide, consensus), 3 means timed out, 4 means no consensus. For verify, the verdicts are tallied
-  on a `verdicts:` line; for decide, the votes are tallied on `votes:` and `CONSENSUS: <option>` lines.
+- It blocks until each agent has answered or passed. `--timeout` is in seconds (default 1800).
+- Exit codes: 0 answered (for a vote, consensus), 3 timed out, 4 no consensus. A vote also prints `votes:` and
+  `CONSENSUS: <option>` lines.
 
 ## When to ask
 
-- **verify**: you found a bug, root cause or result that you're about to act on or report, and a wrong call costs
-  something. Each agent checks it independently against the code.
-- **think**: you're stuck, the design space is wide, or you suspect you're missing something.
-- **decide**: there are two or more reasonable options and the choice is hard to reverse. List them with `-o`.
+- You're about to act on, or report, a non-obvious finding and a wrong call costs something. Ask them to check it
+  against the code.
+- You're stuck, the design space is wide, or you suspect you're missing something.
+- There are two or more reasonable options and the choice is hard to reverse. Make it a vote with `-o`.
 
 Don't ask about things you can check cheaply yourself. Every ask runs up to three agents.
 
-## Writing the request
+## Writing the message
 
-The others see the shared snapshot and the thread, but not your session. So make the request self-contained:
+The others see the shared snapshot and the thread, but not your session. So make the message self-contained:
 
-- the claim or question, in one or two sentences;
+- what you want from them, and the claim or question, in one or two sentences;
 - the evidence, as `path:line` refs into the snapshot, plus any numbers or command output that matter;
 - what you've already ruled out;
-- for decide: the options and the criteria that matter.
+- for a vote: what matters in choosing.
 
 If you changed files since the last snapshot, run `{agora} sync` first so they read what you read.
 
