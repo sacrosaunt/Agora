@@ -297,9 +297,11 @@ def _reveal(q, force):
         post(h["from"], ",".join(["user"] + others), h["text"], extra={"independent": q}, re_=[q])
     open(os.path.join(INDEP, str(q), "revealed"), "w").close()
     missing = [n for n in members(q) if n not in held]
-    quiet = [n for n, h in held.items() if not h.get("text")]
+    failed = [n for n, h in held.items() if h.get("failed")]
+    quiet = [n for n, h in held.items() if not h.get("text") and not h.get("failed")]
     log_turn("reveal", [q], "revealed", note=f"{len(answers)} answers"
              + (f"; no answer from {', '.join(missing)}" if missing else "")
+             + (f"; failed: {', '.join(failed)}" if failed else "")
              + (f"; nothing to add: {', '.join(quiet)}" if quiet else ""))
 
 
@@ -359,7 +361,7 @@ def note_failure(name, ids, rc, fatal=False):
     """Count a failed turn; retries back off 1, 2, 4 min (none when fatal). Returns the record."""
     f = failure(name) or {"tries": 0}
     tries = MAX_TRIES if fatal else f["tries"] + 1
-    rec = {"ids": sorted(set(f.get("ids", [])) | set(ids)), "rc": rc, "tries": tries,
+    rec = {"ids": sorted(set(f.get("ids", [])) | set(ids)), "rc": rc, "tries": tries, "fatal": fatal,
            "next": time.time() + 60 * 2 ** (tries - 1), "t": time.time()}
     os.makedirs(FAIL, exist_ok=True)
     wjson(os.path.join(FAIL, name + ".json"), rec)
@@ -377,7 +379,8 @@ def give_up(name, f):
     for x in AGENTS:
         if x != name and name in ((asleep(x) or {}).get("from") or []):
             sleep_set(x, False)
-    log_turn(name, f["ids"], "gave up", note=f"after {f['tries']} failed tries")
+    log_turn(name, f["ids"], "gave up", note="(not retried: see the error above)" if f.get("fatal")
+             else f"after {f['tries']} failed tries")
 
 
 COLORS = {"user": "1;37", "claude": "38;5;209", "codex": "38;5;114", "gemini": "38;5;75"}

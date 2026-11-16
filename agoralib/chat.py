@@ -274,7 +274,7 @@ def chat(to="all", after=None):
                     emit(col("2", f"{n} answered ({r['note']}; held until all are in)"))
                 elif o == "failed":
                     emit(col("31", f"{n} failed on {ids}: {r['note']}"))
-                elif o == "gave up":
+                elif o == "gave up" and not r["note"].startswith("(not retried"):   # the failure line said it
                     emit(col("31", f"{n} gave up on {ids} {r['note']}; those messages are skipped"))
                 elif o == "budget":
                     emit(col("33", f"budget reached ({r['note']} since you spoke): agents wait for your next message"))

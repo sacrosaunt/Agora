@@ -133,7 +133,8 @@ def serve_loop(a):
             f = failure(name)
             if f and f["tries"] >= MAX_TRIES:   # give up on these messages, visibly
                 give_up(name, f)
-                print(f"{name}: gave up on {f['ids']} after {f['tries']} failed tries", flush=True)
+                print(f"{name}: gave up on {f['ids']}" + ("" if f.get("fatal") else f" after {f['tries']} failed tries"),
+                      flush=True)
                 continue
             if f and time.time() < f["next"]:
                 continue

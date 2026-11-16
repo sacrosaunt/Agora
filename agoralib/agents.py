@@ -206,7 +206,9 @@ def agent_cmd(name, sid, work, out):
         return base + ([] if sid else ["-C", work]) + [
             "-c", "model_reasoning_effort=" + opt("codex", "effort", "medium")] + (
             ["-c", "model=" + json.dumps(opt("codex", "model"))] if opt("codex", "model") else []) + [
-            "-o", out] + codex_perms() + ([sid] if sid else []) + ["-"], True
+            "-o", out] + codex_perms() + (   # Windows: without a sandbox codex rejects every shell command
+            ["-c", 'windows.sandbox="unelevated"'] if WINDOWS and not codex_has("windows") else []) + (
+            [sid] if sid else []) + ["-"], True
     if name == "gemini":  # Antigravity print mode: workspace = code snapshot + work dir; approvals auto-denied
         return [AGY, "--model", opt("gemini", "model", "gemini-4-hydrogen-high"),
                 "--add-dir", CODE] + (["--add-dir", ALSO_DIR] if ALSO else []) + [
@@ -222,6 +224,15 @@ def agent_cmd(name, sid, work, out):
         if opt("claude", key):
             cmd += ["--" + key, opt("claude", key)]
     return cmd + (["--resume", sid] if sid else []), True
+
+
+def codex_has(table):
+    """True when agora's Codex home config sets [table] (or table.x keys) itself."""
+    try:
+        cfg = open(os.path.join(INSTALL, ".codex-home", "config.toml")).read()
+    except OSError:
+        return False
+    return bool(re.search(rf"(?m)^\s*(\[{table}[\].]|{table}\.)", cfg))
 
 
 def codex_perms():
@@ -382,7 +393,8 @@ def _run_agent(name, timeout=1800, do_sync=True):
             f"not retried: fix it (e.g. log {name} in), then post again" if fatal_error(err) else f"try {f['tries']}/{MAX_TRIES}"))
         print(f"{name} failed (rc {r.returncode}){err}; see {os.path.join(STATE, name + '.log')}", file=sys.stderr)
         return None
-    to, zz, wf, re_ = msgs[-1]["from"] if msgs else "all", False, [], list(new)
+    last = next((m for m in reversed(msgs) if m["from"] != name), None)   # never default to addressing itself
+    to, zz, wf, re_ = last["from"] if last else "all", False, [], list(new)
     for _ in range(4):  # directive lines: TO: ..., RE: ..., SLEEP, WAIT: name, in any order
         first, _, rest = text.strip().partition("\n")
         d = first.strip().strip("`*")
