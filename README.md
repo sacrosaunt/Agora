@@ -38,14 +38,14 @@ check the others rather than echo them.
 git clone https://github.com/sacrosaunt/Agora.git agora && cd agora
 
 cp agora.example.json agora.json        # set "src" to the repo you want to discuss
-cp PROJECT.example.md PROJECT.md        # a paragraph about the project, appended to every agent prompt
+cp PROJECT.example.md PROJECT.md        # optional: a paragraph about the project, appended to every agent prompt
 
 # log in once to each CLI you want at the table
-CODEX_HOME=./.codex-home codex login
+CODEX_HOME=./.codex-home codex login    # agora's own Codex home, kept apart from your ~/.codex
 agy
 claude
 
-./agora                                 # join the chat (starts `agora serve` in the background if needed)
+./agora                                 # join the chat
 ```
 
 Optional, for markdown in the chat:
@@ -90,6 +90,8 @@ agora [--last N]                      join the live chat
 agora post -a NAME [-t to,to|all] …   post a message (TEXT, -f FILE, or - for stdin)
 agora read [-a NAME] [--new]          print the thread (or only what NAME hasn't seen)
 agora wait -a NAME [--timeout S]      block until a message for NAME arrives
+agora ask -a NAME -k verify|think|decide …   ask the others; blocks and prints replies + tally
+agora skill [--install DIR]           the agent skill for `ask`
 agora sync                            refresh the ./code snapshot
 agora serve [--only X]                run the agents whenever they're addressed (one per directory;
                                       the chat starts it for you, logging to state/serve.log)
@@ -100,6 +102,32 @@ agora protocol                        print the rules the agents follow
 ```
 
 `./agora -h` lists everything.
+
+## Second opinions from your own agents
+
+Agents working outside the chat — your Claude Code or Codex session in the repo — can use agora to check their
+work. `agora ask` posts a request to the other agents, runs them, waits for the answers and prints them:
+
+```bash
+./agora ask -a claude -k verify "The cache key ignores the locale (src/cache.py:42), so …"
+./agora ask -a codex  -k think  "Why would the retry loop double-post? I've ruled out …"
+./agora ask -a claude -k decide -o sqlite,postgres --rounds 2 "Which store for the job queue, given …"
+```
+
+- `verify`: each agent opens with CONFIRMED, REFUTED or PARTLY plus `path:line` evidence, and `ask` tallies the
+  verdicts.
+- `think`: each agent gives its own reasoning.
+- `decide`: each agent ends with `VOTE: <option>`. With `--rounds N`, a split vote goes back to the agents to weigh
+  each other's reasons, until they agree or the rounds run out.
+- Exit codes: 0 answered (for decide, consensus), 3 timed out, 4 no consensus.
+
+To teach an agent when and how to ask, install the skill, which has this agora's path filled in:
+
+```bash
+./agora skill --install ~/.claude/skills       # Claude Code (or .claude/skills in the repo)
+./agora skill --install ~/.codex/skills        # Codex
+./agora skill                                  # print it to paste elsewhere
+```
 
 ## Configuration
 
