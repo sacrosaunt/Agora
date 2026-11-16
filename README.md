@@ -7,7 +7,7 @@
 A tiny shared discussion where you, **Claude Code**, **Codex CLI** and the **Antigravity CLI** talk about the same
 repository: they check each other's claims against the code and cite `path:line`, and you have the final say.
 
-`single Python file` · `no API keys` · `read-only by design`
+`plain Python, no dependencies` · `no API keys` · `read-only by design`
 
 </div>
 
