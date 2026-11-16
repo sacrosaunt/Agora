@@ -45,7 +45,7 @@ def chat(to="all", after=None):
     tty = ansi_terminal()
     col = (lambda c, t: f"\033[{c}m{t}\033[0m") if tty else (lambda c, t: t)
     state = {"to": to, "last": after if after is not None else (load()[-1]["id"] if load() else 0),
-             "busy": {}, "stop": False, "mine": set(), "shown": False, "frame": 0, "reading": False,
+             "busy": {}, "stop": False, "mine": set(), "shown": False, "frame": 0, "reading": False, "posting": False,
              "toff": os.path.getsize(TURNS) if os.path.exists(TURNS) else 0}
     lock = threading.Lock()
 
@@ -220,6 +220,8 @@ def chat(to="all", after=None):
     def follow():
         while not state["stop"]:
             for m in load():
+                if state["posting"]:   # your message is being posted: the input loop shows it (in place of your line)
+                    break
                 if m["id"] > state["last"]:
                     state["last"] = m["id"]
                     if m["id"] not in state["mine"]:  # your own lines are already on screen
@@ -370,9 +372,11 @@ def chat(to="all", after=None):
                 continue
             if not line:
                 continue
+        state["posting"] = True
         try:
             m = post("user", "all" if mode == "decision" else state["to"], line, mode=mode)
         except SystemExit as e:
+            state["posting"] = False
             emit(col("31", str(e)))
             continue
         seen("user", max(seen("user"), m["id"]))
@@ -386,6 +390,7 @@ def chat(to="all", after=None):
         else:
             state["mine"].add(m["id"])
             emit(col("2", f"posted #{m['id']}"))
+        state["posting"] = False
     state["stop"] = True
 
 
