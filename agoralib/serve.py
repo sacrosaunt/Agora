@@ -99,8 +99,9 @@ def serve_loop(a):
                   f"held for round #{m['held']}" if m and m.get("held") else
                   f"#{m['id']}" if m else "failed"), flush=True)
         except Exception as e:  # keep serving the others; the messages stay unseen and are retried
-            f = note_failure(name, ids, None)
-            log_turn(name, ids, "failed", note=f"error {e!r}, try {f['tries']}/{MAX_TRIES}")
+            f = note_failure(name, ids, None, fatal=fatal_error(repr(e)))
+            log_turn(name, ids, "failed", note=f"error {e!r}, " + (
+                "not retried: fix it, then post again" if fatal_error(repr(e)) else f"try {f['tries']}/{MAX_TRIES}"))
             print(f"{name} -> error {e!r}", flush=True)
         finally:
             busy(name, False)

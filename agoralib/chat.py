@@ -35,6 +35,18 @@ def clip(s, width):
     return out + "…"
 
 
+HELP = """@name,name at the start   address it (sticky); @name inside a message pings a sleeping agent
+/to NAME                  set the recipients
+/ind TEXT                 every agent answers blind; answers are revealed together (/independent)
+/audit TEXT, /design TEXT ask for a longer structured answer
+/decide TEXT              record a decision; /decisions lists them
+/sleep NAME [30m] [until NAME], /wake NAME
+/last N, /all             show the last N messages, or the whole thread
+/status                   agents, sessions, unread counts
+/clock                    switch 12/24-hour times
+/quit or Ctrl-D           leave (// at the start posts a line beginning with / as text)"""
+
+
 def chat(to="all", after=None):
     """Live view: prints every new message as it lands and reads your replies from the prompt."""
     ensure_serve()
@@ -143,7 +155,7 @@ def chat(to="all", after=None):
             write_then_prompt(out, buf)   # the prompt only while input() waits (else input() draws it)
             sys.stdout.flush()
 
-    SLASH = ("independent", "ind", "audit", "design", "decide", "decisions", "sleep", "wake", "to", "last", "all",
+    SLASH = ("help", "independent", "ind", "audit", "design", "decide", "decisions", "sleep", "wake", "to", "last", "all",
              "status", "clock", "quit", "q", "exit")   # the commands the input loop below accepts
 
     def hl_input(buf):
@@ -281,11 +293,7 @@ def chat(to="all", after=None):
                     emit("… " + "; ".join(f"{n} {act_text(a)}" for n, a in state["busy"].items()))
             time.sleep(0.5)
 
-    print(col("2", "Live chat. Type a message and press Enter to post it. @name,name at the start addresses it "
-                   "(sticky); @name inside a message pings a sleeping agent; /to NAME sets recipients; /sleep NAME [30m] [until NAME], "
-                   "/wake NAME; /audit or /design TEXT asks for a longer structured answer; /independent TEXT (/ind) has every "
-                   "agent answer blind, revealed together; /decide TEXT records a decision, /decisions lists them; /last N shows the last N messages, /all the whole thread; "
-                   "/status; /clock switches 12/24-hour times; /quit or Ctrl-D leaves."))
+    print(col("2", "Type a message and press Enter to post it to all. /help lists the commands; /quit leaves."))
     if not tty and any(asleep(n) for n in AGENTS):
         print(sleep_summary({n for n in AGENTS if asleep(n)}))
     if after is not None:
@@ -336,6 +344,9 @@ def chat(to="all", after=None):
             msgs = load()
             for m in (msgs if line == "/all" else msgs[-(int(n) if n.isdigit() else 20):]):
                 show(m)
+            continue
+        if line in ("/help", "/?"):
+            emit(col("2", HELP))
             continue
         if line == "/status":
             emit(subprocess.run(SELF + ["--dir", WS, "status"], capture_output=True, text=True).stdout.rstrip())

@@ -375,10 +375,11 @@ def _run_agent(name, timeout=1800, do_sync=True):
         why = f"resume failed (rc {r.returncode})"
         log.write(why + "; retrying fresh\n")
     if r.returncode or not text:   # the messages stay unseen: serve retries with backoff, then gives up visibly
-        f = note_failure(name, new, r.returncode)
         err = f": {res['error']}" if res.get("error") else ""   # e.g. the CLI's login has expired
+        f = note_failure(name, new, r.returncode, fatal=fatal_error(err))
         log.write(f"failed (rc {r.returncode}){err}\n")
-        log_turn(name, new, "failed", note=f"rc {r.returncode}{err}, try {f['tries']}/{MAX_TRIES}")
+        log_turn(name, new, "failed", note=f"rc {r.returncode}{err}, " + (
+            f"not retried: fix it (e.g. log {name} in), then post again" if fatal_error(err) else f"try {f['tries']}/{MAX_TRIES}"))
         print(f"{name} failed (rc {r.returncode}){err}; see {os.path.join(STATE, name + '.log')}", file=sys.stderr)
         return None
     to, zz, wf, re_ = msgs[-1]["from"] if msgs else "all", False, [], list(new)

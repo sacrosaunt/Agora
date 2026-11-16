@@ -346,10 +346,19 @@ def failure(name, val=None, clear=False):
         return None
 
 
-def note_failure(name, ids, rc):
-    """Count a failed turn; retries back off 1, 2, 4 min. Returns the record."""
+LOGIN_ERR = re.compile(r"authenticat|log ?in|logged|oauth|unauthori[sz]ed|\b401\b|credential|api key|CODEX_HOME"
+                       r"|FileNotFoundError|cannot find the file|No such file", re.I)
+
+
+def fatal_error(err):
+    """A failure that retrying won't fix (an expired login, a missing CLI): give up on the turn at once."""
+    return bool(err and LOGIN_ERR.search(err))
+
+
+def note_failure(name, ids, rc, fatal=False):
+    """Count a failed turn; retries back off 1, 2, 4 min (none when fatal). Returns the record."""
     f = failure(name) or {"tries": 0}
-    tries = f["tries"] + 1
+    tries = MAX_TRIES if fatal else f["tries"] + 1
     rec = {"ids": sorted(set(f.get("ids", [])) | set(ids)), "rc": rc, "tries": tries,
            "next": time.time() + 60 * 2 ** (tries - 1), "t": time.time()}
     os.makedirs(FAIL, exist_ok=True)
