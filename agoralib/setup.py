@@ -52,19 +52,22 @@ def pick(title, options, current):
     return r or current
 
 
+UTF8 = {"encoding": "utf-8", "errors": "replace"}   # Windows would decode as cp1252 and drop the output
+
+
 def cli_models(name):
     """[(model, note)] the CLI offers, best effort ([] when it can't say), and {model: [efforts]}."""
     try:
         if name == "codex":
-            r = subprocess.run(["codex", "debug", "models"], capture_output=True, text=True, timeout=60,
+            r = subprocess.run(["codex", "debug", "models"], capture_output=True, timeout=60, **UTF8,
                                env=agent_env("codex"))
-            ms = [m for m in json.loads(r.stdout).get("models", []) if m.get("visibility") == "list"]
+            ms = [m for m in json.loads(r.stdout or "{}").get("models", []) if m.get("visibility") == "list"]
             return ([(m["slug"], m.get("description", "")) for m in ms],
                     {m["slug"]: [e["effort"] for e in m.get("supported_reasoning_levels", [])] for m in ms})
         if name == "gemini":
-            r = subprocess.run([AGY, "models"], capture_output=True, text=True, timeout=60)
+            r = subprocess.run([AGY, "models"], capture_output=True, timeout=60, **UTF8)
             return [tuple((l.split("\t") + [""])[:2]) for l in r.stdout.splitlines() if "\t" in l], {}
-        h = subprocess.run([CLAUDE, "--help"], capture_output=True, text=True, timeout=60).stdout
+        h = subprocess.run([CLAUDE, "--help"], capture_output=True, timeout=60, **UTF8).stdout or ""
         m, e = re.search(r"--model <model>(.*?)\n  -", h, re.S), re.search(r"--effort <level>.*?\((.*?)\)", h, re.S)
         return ([(x, "") for x in re.findall(r"'([\w.-]+)'", m.group(1))] if m else [],
                 {"*": [x.strip() for x in e.group(1).split(",")]} if e else {})
