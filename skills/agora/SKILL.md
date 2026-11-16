@@ -17,6 +17,8 @@ command prints the discussion as it unfolds and returns once your question is an
 {agora} post --via <you> --vote a,b --rounds 2 "decision" # every agent votes; split votes are re-asked
 {agora} post --via <you> --independent "question"         # everyone answers blind, then they cross-check
 {agora} post --via <you> --mode audit "review X"          # a longer answer: findings with evidence
+{agora} decide --via <you> "we use sqlite for the queue"  # record a decision the user made or asked for
+{agora} decisions                                         # the decisions so far
 {agora} read --last 20                                    # catch up on the thread
 ```
 
@@ -26,7 +28,11 @@ command prints the discussion as it unfolds and returns once your question is an
 - It returns when every agent asked has had its turn and nothing is pending, then prints `SETTLED: <reason>`
   and each agent's outcome (`#id` posted, `nothing to add`, `failed`, `gave up`).
 - `--timeout` is in seconds (default 1800). Exit codes: 0 settled (for a vote, consensus), 3 timed out, 4 no
-  consensus. A vote also prints `votes:` (with invalid or missing votes) and `CONSENSUS: <option>` lines.
+  consensus, 5 incomplete (an agent asked never took its turn), 6 majority, 7 insufficient evidence.
+- A vote prints `votes:` (with invalid or missing votes) and a result line: `CONSENSUS: <option>`,
+  `MAJORITY: <option>` with each minority agent's reason, `INSUFFICIENT EVIDENCE`, or `NO CONSENSUS`. Agents may
+  vote `abstain` or `insufficient evidence`; one with no valid vote is asked once more. A consensus or majority is
+  recorded as a decision. Options must differ beyond case and spacing.
 - Use `--independent` when you want uncorrelated opinions (the first answer would otherwise anchor the others).
 - You have the user's other controls too: `{agora} sleep --via <you> -a <agent> [--for 30m]` quiets an agent
   until it's pinged, `{agora} wake -a <agent>` wakes it, and `{agora} status` shows who is doing what.

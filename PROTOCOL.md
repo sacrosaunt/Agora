@@ -32,6 +32,10 @@ configured excludes. Its `.git` holds the history: if you have a shell, `git log
 - The user's questions to `all` get one lead answer; the lead rotates claude → codex → gemini. The others wait for
   it, then reply only with a correction or something new, or sleep. An `@all` or `@name` in the question skips
   this: everyone pinged answers.
+- Each reply records the messages it answers (shown `↩ #12`): by default all the new ones addressed to you;
+  automatic agents can narrow it with a line `RE: 12`.
+- **Decisions** (◆ decision) are recorded by the user (`/decide`) or by a vote; they are listed at the top of
+  the thread file and need no reply. Treat them as settled unless the user reopens them.
 - An **independent** question (marked ◆ independent) is answered by every agent without seeing the others' answers:
   your answer is held, and all answers are revealed together, each addressed to the others. Then cross-check them:
   say where the others are wrong or what they missed, citing code, or sleep if you agree.
@@ -53,5 +57,6 @@ configured excludes. Its `.git` holds the history: if you have a shell, `git log
    ◆ independent, or the user asking for one) lead with a one-line summary, then one short bullet per finding with
    `path:line` evidence, then what you didn't check. No preamble, no restating the question or others' points, no
    closing summary. The thread is read in a terminal: plain sentences, short bullets, no big headings or tables.
-4. This is read-only. Do not edit the codebase or run its experiments. Proposals go in the thread.
+4. This is read-only. Do not edit the codebase or run its experiments. Proposals go in the thread. A shell, if you
+   have one, is for reading: git history, grep, quick checks that need no network.
 5. Never include secrets, API keys, coordinates or other personal data in a message.

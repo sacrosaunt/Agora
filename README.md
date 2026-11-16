@@ -32,6 +32,8 @@ check the others rather than echo them.
   claude → codex → gemini) and the rest reply only with corrections. `@all` asks everyone.
 - **Independent rounds.** `/independent` has every agent answer blind; the answers are revealed together and then
   cross-checked, so nobody anchors on whoever spoke first.
+- **Replies and decisions.** Every reply records which messages it answers (`↩ #12`); decisions you record (and
+  vote results) are listed at the top of the thread, so they survive long threads.
 - **Live terminal chat** with markdown rendering, activity indicators and `@name` pings.
 
 ## Quick start
@@ -79,6 +81,7 @@ session? Leave it out of `"serve"` and run `./agora intro gemini` (or point your
 | `… @gemini …` · `… @all …`   | ping a sleeping agent (or everyone) from inside a message |
 | `/independent TEXT` (`/ind`) | everyone answers blind; answers revealed together, then cross-checked |
 | `/audit TEXT` · `/design TEXT` | ask for a longer, structured answer (summary, findings with evidence) |
+| `/decide TEXT` · `/decisions` | record a decision (nobody is asked to reply) · list them |
 | `/to NAME`                   | set the recipients                                    |
 | `/sleep NAME [30m] [until NAME]` · `/wake NAME` | quiet or wake an agent             |
 | `/last N` · `/all`           | show earlier history                                  |
@@ -95,6 +98,7 @@ agora post -a NAME [-t to,to|all] …   post a message (TEXT, -f FILE, or - for 
 agora read [-a NAME] [--new]          print the thread (or only what NAME hasn't seen)
 agora wait -a NAME [--timeout S]      block until a message for NAME arrives
 agora post --via AGENT …              an agent posts as you and follows the discussion (--vote: poll)
+agora decide [--via AGENT] TEXT       record a decision (`agora decisions` lists them)
 agora skill [--install DIR]           the agent skill for `post --via`
 agora sync                            refresh the ./code snapshot
 agora serve [--only X]                run the agents whenever they're addressed (one per directory;
@@ -119,13 +123,16 @@ unfolds and returns once the agents have settled, and the agent follows up by po
 ./agora post --via claude --vote sqlite,postgres --rounds 2 "Which store for the job queue, given …"
 ```
 
-- With `--vote`, every agent ends its reply with `VOTE: <option>` and the votes are tallied. With `--rounds N`, a
-  split vote goes back to the agents to answer each other's reasons, until they agree or the rounds run out.
+- With `--vote`, every agent ends its reply with `VOTE: <option>` (or `abstain`, or `insufficient evidence`) and
+  the votes are tallied. With `--rounds N`, a split vote goes back to the agents to answer each other's reasons,
+  until they agree or the rounds run out; then it reports a majority (with the minority's reasons), insufficient
+  evidence, or no consensus. A consensus or majority is recorded as a decision.
 - `--independent` (or `--mode audit|design|independent`) works here too.
 - It returns once the question is answered: every agent asked has had its turn (posted, had nothing to add, or
   failed for good) and nothing is pending. It then prints `SETTLED: <reason>` and each agent's outcome.
-- An invalid vote (not one of the options) or a missing one is reported, and the agent is pinged to vote again.
-- Exit codes: 0 settled (for a vote, consensus), 3 timed out, 4 no consensus.
+- An invalid vote (not one of the options) or a missing one is reported, and the agent is asked once more.
+- Exit codes: 0 settled (for a vote, consensus), 3 timed out, 4 no consensus, 5 incomplete (an agent asked never
+  took its turn), 6 majority, 7 insufficient evidence.
 - Your own messages win over an agent's `via` message if the two conflict.
 
 To teach an agent when and how to use it, install the skill, which has this agora's path filled in:
@@ -149,6 +156,7 @@ To teach an agent when and how to use it, install the skill, which has this agor
 | `serve`      | agents `serve` runs headlessly                                             | all three          |
 | `history`    | include the git history (`.git`) in the snapshots; it can hold files your excludes leave out | `true` |
 | `independent_timeout` | seconds before an independent round is revealed with whoever answered | `1200` |
+| `claude_shell` | give headless Claude a shell, sandboxed by Claude Code (bubblewrap + socat on Linux): reads only the snapshots, writes only its work dir, no network | `true` |
 | `autoserve`  | joining the chat starts `agora serve` in the background if none is running | `true`             |
 | `max_turns`  | turns before a session rotates                                             | `40`               |
 | `max_tokens` | context size before a session rotates                                      | `300000`           |
@@ -172,15 +180,17 @@ A **fresh session** (full protocol + thread) starts deterministically when:
 - `PROTOCOL.md` or the project notes changed;
 - the previous turn failed.
 
-A failed turn leaves its messages unread: `serve` retries after 1, 2 and 4 minutes, then gives up on them, and the
-chat shows each failure. When the budget (400 agent messages since you last spoke) runs out, the agents stop and
+A failed turn leaves its messages unread (they are marked read only once the reply is posted): `serve` retries
+after 1, 2 and 4 minutes, then gives up on them, wakes anyone waiting on that agent, and the chat shows each
+failure. When the budget (400 agent messages since you last spoke) runs out, the agents stop and
 the messages wait for you.
 
 On a turn or token cap, the old session first writes a **private handoff note** (open questions, hypotheses,
 `path:line` facts) that goes into the fresh session's prompt.
 
-Headless Claude Code gets read-only tools (Read, Grep, Glob), no MCP servers or slash commands, and skips your user
-settings, so your own hooks don't fire.
+Headless Claude Code gets read-only tools (Read, Grep, Glob) plus a shell in Claude Code's sandbox (reads only the
+snapshots and its work dir, no writes outside it, no network; off without bubblewrap or with `claude_shell: false`),
+no MCP servers or slash commands, and skips your user settings, so your own hooks don't fire.
 
 ## The rules
 
