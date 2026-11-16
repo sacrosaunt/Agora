@@ -15,71 +15,44 @@ repository: they check each other's claims against the code and cite `path:line`
 
 <p align="center"><img src="docs/chat.png" alt="agora live chat: claude, codex and gemini discussing a bug, citing path:line, replies linked and a decision recorded" width="900"></p>
 
-## Why
+Ask one model about your code and you get one confident answer. Ask three in the same room and you get
+**disagreement you can act on**: each agent reads the code itself, cites `path:line`, and checks the others instead
+of echoing them.
 
-Asking one model about your code gets you one confident answer. Asking three in the same room gets you
-**disagreement you can act on**: each agent reads the code itself, answers what's addressed to it, and is told to
-check the others rather than echo them.
-
-- **One shared thread.** Everything lives in `thread.jsonl` and is rendered to `thread.md`. Everyone sees every
-  message; `-t` only decides who is expected to answer.
-- **Read-only snapshot.** Agents read a copy of your project (the files git doesn't ignore, minus your excludes and
-  anything secret-looking like `.env` or `*.pem`, plus the git history), never the live tree, and never edit anything.
-- **A table per project.** Run `agora` in any repo or plain folder and you get that project's own thread, kept in
-  `~/.local/share/agora`; nothing is written into your project.
-- **Your logins, not API keys.** Each CLI runs on its own local login; agora strips `OPENAI_API_KEY`,
-  `CODEX_API_KEY` and `ANTHROPIC_API_KEY` from their environment.
-- **Persistent sessions.** Each agent keeps one CLI session and is resumed with only the messages it hasn't seen.
-- **Quiet by default.** Agents with nothing new say `SLEEP`; questions to `all` get one lead answer (rotating
-  claude → codex → gemini) and the rest reply only with corrections. `@all` asks everyone.
-- **Independent rounds.** `/independent` has every agent answer blind; the answers are revealed together and then
-  cross-checked, so nobody anchors on whoever spoke first.
-- **Replies and decisions.** Every reply records which messages it answers (`↩ #12`); decisions you record (and
-  vote results) are listed at the top of the thread, so they survive long threads.
-- **Live terminal chat** with markdown rendering, activity indicators and `@name` pings.
+- **Read-only.** Agents read a snapshot of your project, never the live tree, and never edit anything.
+- **Your logins.** Each CLI runs on its own local login; no API keys.
+- **Usable by your agents.** Your Claude Code or Codex session can bring a question to the table itself.
 
 ## Quick start
 
 ```bash
 git clone https://github.com/sacrosaunt/Agora.git agora
-ln -s "$PWD/agora/agora" ~/.local/bin/agora     # put it on your PATH (macOS: /usr/local/bin or /opt/homebrew/bin)
-
-# log in once to each CLI you want at the table
-CODEX_HOME="$PWD/agora/.codex-home" codex login  # agora's own Codex home, kept apart from your ~/.codex
-agy
-claude
+ln -s "$PWD/agora/agora" ~/.local/bin/agora      # on your PATH (macOS: /usr/local/bin or /opt/homebrew/bin)
+CODEX_HOME="$PWD/agora/.codex-home" codex login   # log in each CLI you want at the table (agy and claude: just run them)
 
 cd ~/code/my-project
-agora setup        # what to leave out, which agents to seat, their models and efforts
-agora              # join the chat
+agora                                            # first run in a folder: a short setup, then the chat
 ```
 
-`agora setup` runs by itself the first time you use a new folder, and offers to install `rich` (markdown in the
-chat) into agora's own `.venv`, which the script then switches to by itself. A symlink beats a shell alias: the
-agents and scripts that call `agora` find it too.
+Requires Python 3.9+, Linux or macOS (Windows via WSL), and any of `claude`, `codex` and `agy`.
 
-- **No repo?** In a plain folder agora snapshots the files a `.gitignore` there doesn't exclude.
-  `agora --src DIR` discusses another folder; `agora --no-src` starts a discussion without code.
-- `agora where` shows this folder's workspace, `agora ls` lists them all. Project notes for the agents go in
-  `PROJECT.md` in the workspace (see `PROJECT.example.md`).
-- Agora refuses to snapshot a whole home or system directory, and stops refreshing a snapshot past 20000 files or
-  500 MB (`max_files`, `max_mb`); exclude the bulk with `agora setup`.
+## Let your agents ask the table
 
-Requires **Python 3.9+**, **Linux or macOS** (Windows via WSL), and whichever of `claude`, `codex` and `agy` you
-want to seat.
+Your Claude Code or Codex session can take your seat to have a finding checked, think a problem through, or put a
+decision to a vote. `post --via` posts as you, prints the discussion as it unfolds, and returns once the agents
+have settled:
 
-## The participants
+```bash
+agora skill --install ~/.claude/skills    # teach Claude Code when and how (Codex: ~/.codex/skills)
+```
 
-| Name         | Who                                   |
-| ------------ | ------------------------------------- |
-| **user**     | You. Sets the topic, has the final say. |
-| **claude**   | Claude Code (Anthropic)               |
-| **codex**    | Codex CLI (OpenAI)                    |
-| **gemini**   | Gemini via the Antigravity CLI (`agy`) |
+<p align="center"><img src="docs/via.png" alt="agora post --via claude --vote sqlite,postgres: codex, gemini and claude each argue from the code and vote; the result is a majority for sqlite with gemini's minority reason" width="820"></p>
 
-The agents are equals: no agent leads or decides for the others. Want to drive one seat yourself in an interactive
-session? Leave it out of `"serve"` and run `agora intro gemini` (or `claude`, `codex`) for its starter prompt
-(or point your own Claude Code at `agora protocol`).
+- `--vote a,b` makes every agent end with `VOTE: <option>`; `--rounds N` sends a split vote back for the agents to
+  answer each other. A consensus or majority is recorded as a decision.
+- `--independent` has everyone answer blind first, so nobody anchors on whoever spoke first.
+- Exit codes: 0 settled (or consensus), 3 timed out, 4 no consensus, 5 incomplete, 6 majority, 7 insufficient
+  evidence.
 
 ## In the chat
 
@@ -97,9 +70,28 @@ session? Leave it out of `"serve"` and run `agora intro gemini` (or `claude`, `c
 | `/clock`                     | switch between 12- and 24-hour times (saved)          |
 | `/quit` or Ctrl-D            | leave                                                 |
 
-`agora --last 50` joins showing the last 50 messages (default 20).
+Agents with nothing new stay quiet; a question to `all` gets one lead answer (rotating claude → codex → gemini) and
+the others add only corrections. `@all` asks everyone.
 
-## Commands
+## Projects
+
+Each repo or folder you run `agora` in gets its own table: thread, state and snapshot live in
+`~/.local/share/agora` (`agora where` shows which, `agora ls` lists them), and nothing is written into your project.
+
+- **The snapshot** holds the files git doesn't ignore, minus your excludes and anything secret-looking (`.env*`,
+  `*.pem`, `id_rsa*`, …), plus the git history. `agora sync` refreshes it; the agents refresh it before each turn.
+- **No repo?** In a plain folder agora uses the folder's `.gitignore`. `agora --src DIR` discusses another folder;
+  `agora --no-src` starts a discussion without code.
+- **`agora setup`** (run by itself in a new folder) picks what to leave out from a size scan, which agents answer
+  automatically, and their models and efforts. It also offers to install `rich` for markdown in the chat.
+- **Project notes** for the agents go in `PROJECT.md` in the workspace (see `PROJECT.example.md`).
+- **Limits.** Agora refuses to snapshot a whole home or system directory, and stops refreshing a snapshot past
+  20000 files or 500 MB; exclude the bulk with `agora setup`.
+- **A seat of your own.** Leave an agent out of `"serve"` and run `agora intro gemini` (or `claude`, `codex`) for
+  the starter prompt of a session you drive yourself.
+
+<details>
+<summary><b>All commands</b></summary>
 
 ```text
 agora [--last N]                      join the live chat
@@ -123,43 +115,16 @@ agora intro NAME                      starter prompt for a seat you run by hand
 
 Options before the command: `--src DIR`, `--no-src`, `--dir WORKSPACE`. `agora -h` lists everything.
 
-## Letting your agents use the table
-
-An agent working outside the chat — your Claude Code or Codex session in the repo — can take your seat to have a
-finding checked, think a problem through, or settle a decision. `post --via` posts as you, marked `user (via
-<agent>)`, so the agents handle it exactly as they would your message. The command prints the discussion as it
-unfolds and returns once the agents have settled, and the agent follows up by posting again:
-
-```bash
-agora post --via claude "The cache key ignores the locale (src/cache.py:42), so … Can you confirm?"
-agora post --via claude --vote sqlite,postgres --rounds 2 "Which store for the job queue, given …"
-```
-
-- With `--vote`, every agent ends its reply with `VOTE: <option>` (or `abstain`, or `insufficient evidence`) and
-  the votes are tallied. With `--rounds N`, a split vote goes back to the agents to answer each other's reasons,
-  until they agree or the rounds run out; then it reports a majority (with the minority's reasons), insufficient
-  evidence, or no consensus. A consensus or majority is recorded as a decision.
-- `--independent` (or `--mode audit|design|independent`) works here too.
-- It returns once the question is answered: every agent asked has had its turn (posted, had nothing to add, or
-  failed for good) and nothing is pending. It then prints `SETTLED: <reason>` and each agent's outcome.
-- An invalid vote (not one of the options) or a missing one is reported, and the agent is asked once more.
-- Exit codes: 0 settled (for a vote, consensus), 3 timed out, 4 no consensus, 5 incomplete (an agent asked never
-  took its turn), 6 majority, 7 insufficient evidence.
-- Your own messages win over an agent's `via` message if the two conflict.
-
-To teach an agent when and how to use it, install the skill, which has this agora's path filled in:
-
-```bash
-agora skill --install ~/.claude/skills       # Claude Code (or .claude/skills in the repo)
-agora skill --install ~/.codex/skills        # Codex
-agora skill                                  # print it to paste elsewhere
-```
+</details>
 
 ## Configuration
 
 `agora setup` writes the config for you. There are two `agora.json` files: the one next to the script holds
 install-wide defaults (agents, models, limits; see `agora.example.json`), and the workspace's own (`agora where`)
 overrides them and alone holds the project keys `exclude`, `project`, `also` and `history`.
+
+<details>
+<summary><b>All keys</b></summary>
 
 | Key          | Meaning                                                                    | Default            |
 | ------------ | -------------------------------------------------------------------------- | ------------------ |
@@ -184,7 +149,17 @@ overrides them and alone holds the project keys `exclude`, `project`, `also` and
 Environment overrides: `AGORA_DATA` (where workspaces live), `AGORA_SRC`, `AGORA_EXCLUDE` (comma-separated), `AGORA_AUTOSERVE=0`, and `AGORA_<AGENT>_<KEY>` for the
 per-agent keys (e.g. `AGORA_CODEX_MODEL`, `AGORA_CLAUDE_EFFORT`).
 
-## How sessions work
+</details>
+
+## How it works
+
+The thread is `thread.jsonl`, rendered to `thread.md` with the recorded decisions and vote results at the top.
+Every reply records which messages it answers (`↩ #12`). The agents run on your CLI logins; agora strips
+`OPENAI_API_KEY`, `CODEX_API_KEY` and `ANTHROPIC_API_KEY` from their environment.
+
+<details>
+<summary><b>Sessions, retries and sandboxing</b></summary>
+
 
 Each served agent keeps **one persistent CLI session** (a Codex thread, an Antigravity conversation, a Claude Code
 session) and is resumed every turn with only the new messages, so it remembers what it already read.
@@ -208,6 +183,8 @@ On a turn or token cap, the old session first writes a **private handoff note** 
 Headless Claude Code gets read-only tools (Read, Grep, Glob) plus a shell in Claude Code's sandbox (reads only the
 snapshots and its work dir, no writes outside it, no network; off without bubblewrap or with `claude_shell: false`),
 no MCP servers or slash commands, and skips your user settings, so your own hooks don't fire.
+
+</details>
 
 ## The rules
 
