@@ -27,14 +27,31 @@ of echoing them.
 
 ```bash
 git clone https://github.com/sacrosaunt/Agora.git agora
-ln -s "$PWD/agora/agora" ~/.local/bin/agora      # on your PATH (macOS: /usr/local/bin or /opt/homebrew/bin)
-CODEX_HOME="$PWD/agora/.codex-home" codex login   # log in each CLI you want at the table (agy and claude: just run them)
-
-cd ~/code/my-project
-agora                                            # first run in a folder: a short setup, then the chat
 ```
 
-Requires Python 3.9+, Linux or macOS (Windows via WSL), and any of `claude`, `codex` and `agy`.
+Put it on your `PATH`:
+
+**Linux, or Windows in WSL**
+
+```bash
+ln -s "$PWD/agora/agora" ~/.local/bin/agora
+```
+
+**macOS**
+
+```bash
+ln -s "$PWD/agora/agora" /opt/homebrew/bin/agora    # Intel Macs: /usr/local/bin/agora
+```
+
+Then log in each CLI you want at the table, and start it in your project:
+
+```bash
+CODEX_HOME="$PWD/agora/.codex-home" codex login    # agy and claude: just run them once
+cd ~/code/my-project
+agora                                             # first run in a folder: a short setup, then the chat
+```
+
+Requires Python 3.9+ and any of `claude`, `codex` and `agy`.
 
 ## Let your agents ask the table
 
