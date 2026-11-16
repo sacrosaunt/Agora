@@ -55,7 +55,7 @@ def ensure_serve():
         f.close()    # free it for the child
         pol = serve_policy()
         log = open(os.path.join(STATE, "serve.log"), "a")
-        subprocess.Popen([sys.executable, SCRIPT, "--dir", WS, "serve", "--auto"]
+        subprocess.Popen(SELF + ["--dir", WS, "serve", "--auto"]
                          + (["--only", pol["only"]] if pol.get("only") else [])
                          + (["--budget", str(pol["budget"])] if pol.get("budget") else []),
                          stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, cwd=WS, **detached())

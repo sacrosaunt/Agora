@@ -1,5 +1,6 @@
 """The live terminal chat."""
 import argparse, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
+import difflib
 from .compat import *  # noqa: F401,F403
 from .ws import *  # noqa: F401,F403
 from .store import *  # noqa: F401,F403
@@ -337,7 +338,7 @@ def chat(to="all", after=None):
                 show(m)
             continue
         if line == "/status":
-            emit(subprocess.run([sys.executable, SCRIPT, "--dir", WS, "status"], capture_output=True, text=True).stdout.rstrip())
+            emit(subprocess.run(SELF + ["--dir", WS, "status"], capture_output=True, text=True).stdout.rstrip())
             continue
         if line.startswith(("/sleep", "/wake")):
             cmd, *rest = line[1:].split()
@@ -365,7 +366,15 @@ def chat(to="all", after=None):
             continue
         mode = None
         mm = re.match(r"/(independent|ind|audit|design|decide)\b\s*(.*)", line, re.S)
-        if mm:
+        if line.startswith("//"):   # posted as text, one slash
+            line = line[1:]
+        elif not mm and re.match(r"/[A-Za-z]+(\s|$)", line):   # an unknown /word (a path like /src/x isn't one)
+            w = line.split()[0]
+            near = difflib.get_close_matches(w[1:].lower(), SLASH, 1, 0.6)
+            emit(col("31", f"unknown command {w}" + (f" (did you mean /{near[0]}?)" if near else "")
+                     + "; start with // to post it as text"))
+            continue
+        elif mm:
             mode, line = {"ind": "independent", "decide": "decision"}.get(mm.group(1), mm.group(1)), mm.group(2).strip()
             if not line:
                 emit(col("31", f"usage: /{mm.group(1)} TEXT"))

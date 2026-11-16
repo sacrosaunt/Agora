@@ -115,8 +115,15 @@ def setup():
         save_cfg(ICONFIG, inst)
     else:
         save_cfg(CONFIG, inst)
-    if "codex" in inst["serve"] and not os.path.exists(os.path.join(INSTALL, ".codex-home", "auth.json")):
-        print(f"\nLog Codex in once (agora's own Codex home): CODEX_HOME={os.path.join(INSTALL, '.codex-home')} codex login")
+    home = os.path.join(INSTALL, ".codex-home")   # agora's own Codex home: your ~/.codex stays untouched
+    if "codex" in inst["serve"] and not os.path.exists(os.path.join(home, "auth.json")):
+        codex = shutil.which("codex")
+        if codex and ask("\nCodex isn't logged in for agora yet (it keeps its own Codex home). Log in now? [Y/n]",
+                         "y").lower().startswith("y"):
+            os.makedirs(home, exist_ok=True)
+            subprocess.run([codex, "login"], env={**os.environ, "CODEX_HOME": home})
+        if not os.path.exists(os.path.join(home, "auth.json")):
+            print(f"\nLog Codex in later: `agora setup` again, or CODEX_HOME={home} codex login")
     try:
         import rich  # noqa: F401
     except ImportError:

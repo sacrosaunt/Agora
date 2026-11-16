@@ -43,20 +43,22 @@ macOS:
 ln -s "$PWD/agora/agora" /opt/homebrew/bin/agora    # Intel Macs: /usr/local/bin/agora
 ```
 
-Windows (PowerShell): add the `agora` folder, which holds `agora.cmd`, to your user `PATH`, then open a new terminal.
+Windows (PowerShell): add the `agora` folder, which holds `agora.cmd`, to your user `PATH` (the first line) and to
+this window's (the second; other open terminals pick it up when restarted).
 
 ```powershell
 [Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";$PWD\agora", "User")
+$env:Path += ";$PWD\agora"
 ```
 
 **3. Log in and start**
 
-Log in each CLI you want at the table (`agy` and `claude`: just run them once), then run `agora` in your project:
+Log in `claude` and `agy` if you use them (just run each once), then run `agora` in your project. The first run
+in a folder is a short setup, which also logs Codex in to agora's own Codex home; then the chat starts.
 
 ```bash
-CODEX_HOME="$PWD/agora/.codex-home" codex login     # Windows: $env:CODEX_HOME="$PWD\agora\.codex-home"; codex login
 cd ~/code/my-project
-agora                                              # first run in a folder: a short setup, then the chat
+agora
 ```
 
 Requires Python 3.9+ and any of `claude`, `codex` and `agy`.

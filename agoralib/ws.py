@@ -5,6 +5,9 @@ from .compat import *  # noqa: F401,F403
 
 INSTALL = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))   # the program: venv, templates, Codex home, default config
 SCRIPT = os.path.join(INSTALL, "agora")   # the launcher
+# agora run as a child of this process: already in the right interpreter, and on Windows straight into UTF-8 mode, so
+# the launcher doesn't start a second process (whose output a redirect, e.g. serve's log, wouldn't reach)
+SELF = [sys.executable] + (["-X", "utf8"] if WINDOWS else []) + [SCRIPT]
 COMMAND = os.path.join(INSTALL, "agora.cmd") if WINDOWS else SCRIPT   # what a shell (or an agent) runs
 VENV = os.path.join(INSTALL, ".venv")  # optional: python -m venv .venv && .venv/bin/pip install -r requirements.txt
 NAMES = ("user", "claude", "codex", "gemini")
