@@ -137,6 +137,7 @@ To teach an agent when and how to use it, install the skill, which has this agor
 | `src`        | the git repo to discuss                                                    | (required)         |
 | `exclude`    | path prefixes kept out of the snapshot (`data/`, `runs/`, …)               | `[]`               |
 | `project`    | project notes appended to the protocol                                     | `PROJECT.md`       |
+| `also`       | extra repos the agents may read, `{"name": "/path"}`, snapshotted to `./also/<name>` | `{}`      |
 | `serve`      | agents `serve` runs headlessly                                             | all three          |
 | `autoserve`  | joining the chat starts `agora serve` in the background if none is running | `true`             |
 | `max_turns`  | turns before a session rotates                                             | `40`               |

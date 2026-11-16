@@ -12,6 +12,7 @@ AGORA_EXCLUDE (comma-separated):  {"src": "/path/to/repo", "exclude": ["data/", 
   project  markdown file with project notes appended to the protocol (default PROJECT.md here)
   agy      Antigravity CLI binary (default: agy on PATH)
   claude   Claude Code CLI binary (default: claude on PATH, else ~/.local/bin/claude)
+  also     {"name": "/path/to/repo", ...}: extra repos the agents may read, snapshotted to ./also/<name>
   serve    agents the serve loop runs headlessly (default: all three; drop one whose seat a person runs)
   autoserve  joining the chat starts `agora serve` in the background if none is running (default true;
            env AGORA_AUTOSERVE=0 turns it off)
@@ -75,6 +76,14 @@ def load_config():
 
 
 SRC, EXCLUDE, PROJECT, AGY = load_config()
+ALSO_DIR = os.path.join(HOME, "also")  # extra repos, each snapshotted read-only to also/<name>
+ALSO = {k: os.path.expanduser(v) for k, v in (CFG.get("also") or {}).items()}
+
+
+def also_note():
+    """Prompt text naming the extra read-only snapshots, or ''."""
+    return ("Also readable (read-only snapshots): " + ", ".join(f"{k} at {os.path.join(ALSO_DIR, k)}" for k in ALSO)
+            + ". ") if ALSO else ""
 CLAUDE = os.path.expanduser(os.environ.get("AGORA_CLAUDE") or CFG.get("claude") or shutil.which("claude")
                             or "~/.local/bin/claude")
 MAX_TURNS, MAX_TOKENS = int(CFG.get("max_turns", 40)), int(CFG.get("max_tokens", 300_000))
@@ -255,33 +264,49 @@ def sync():
         return _sync()
 
 
-def _sync():
-    files = subprocess.run(["git", "-C", SRC, "ls-files", "-z", "-co", "--exclude-standard"],
+def _snap(src, dest, exclude=()):
+    """Copy src's git-tracked (and untracked, not ignored) files minus exclude into dest, swapped in whole.
+    Returns (file count, content digest, HEAD line)."""
+    files = subprocess.run(["git", "-C", src, "ls-files", "-z", "-co", "--exclude-standard"],
                            capture_output=True, check=True).stdout.decode().split("\0")
-    files = [f for f in files if f and not f.startswith(EXCLUDE) and os.path.isfile(os.path.join(SRC, f))]
+    files = [f for f in files if f and not f.startswith(exclude) and os.path.isfile(os.path.join(src, f))]
     dig = __import__("hashlib").sha1()
     for f in files:
-        st = os.stat(os.path.join(SRC, f))
+        st = os.stat(os.path.join(src, f))
         dig.update(f"{f}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
-    new = os.path.join(HOME, "code.new")
+    new, old = dest + ".new", dest + ".old"
     shutil.rmtree(new, ignore_errors=True)
     for f in files:
         d = os.path.join(new, f)
         os.makedirs(os.path.dirname(d), exist_ok=True)
-        shutil.copy2(os.path.join(SRC, f), d)
-    head = subprocess.run(["git", "-C", SRC, "log", "-1", "--format=%h %s"], capture_output=True, text=True).stdout
+        shutil.copy2(os.path.join(src, f), d)
+    os.makedirs(new, exist_ok=True)
+    head = subprocess.run(["git", "-C", src, "log", "-1", "--format=%h %s"], capture_output=True, text=True).stdout
     with open(os.path.join(new, "SNAPSHOT.txt"), "w") as fh:
-        fh.write(f"Snapshot of {SRC} at {time.strftime('%Y-%m-%d %H:%M:%S')}, HEAD {head}"
-                 f"{len(files)} files; excluded: {', '.join(EXCLUDE) or 'nothing'} plus gitignored files.\n")
-    old = os.path.join(HOME, "code.old")
+        fh.write(f"Snapshot of {src} at {time.strftime('%Y-%m-%d %H:%M:%S')}, HEAD {head}"
+                 f"{len(files)} files; excluded: {', '.join(exclude) or 'nothing'} plus gitignored files.\n")
     shutil.rmtree(old, ignore_errors=True)
-    if os.path.exists(CODE):
-        os.rename(CODE, old)
-    os.rename(new, CODE)
+    if os.path.exists(dest):
+        os.rename(dest, old)
+    os.rename(new, dest)
     shutil.rmtree(old, ignore_errors=True)
+    return len(files), dig.hexdigest(), head
+
+
+def _sync():
+    n, dig, head = _snap(SRC, CODE, EXCLUDE)
+    for name, path in ALSO.items():
+        if not os.path.isdir(os.path.join(path, ".git")) or os.path.realpath(path) == os.path.realpath(SRC):
+            print(f"agora: skipping also.{name}: {path} is not a separate git repo", file=sys.stderr)
+            continue
+        dig += _snap(path, os.path.join(ALSO_DIR, name))[1]
+    if os.path.isdir(ALSO_DIR):  # drop snapshots of repos no longer configured
+        for d in os.listdir(ALSO_DIR):
+            if d not in ALSO:
+                shutil.rmtree(os.path.join(ALSO_DIR, d), ignore_errors=True)
     with open(os.path.join(STATE, "snapshot.json"), "w") as fh:  # content digest: sessions note real changes only
-        json.dump({"digest": dig.hexdigest()[:12], "head": head.strip()}, fh)
-    return len(files)
+        json.dump({"digest": __import__("hashlib").sha1(dig.encode()).hexdigest()[:12], "head": head.strip()}, fh)
+    return n
 
 
 AUTO = tuple(CFG.get("serve") or AGENTS)  # agents the serve loop runs headlessly
@@ -454,11 +479,12 @@ def agent_cmd(name, sid, work, out):
             "-o", out] + ([sid] if sid else []) + ["-"], True
     if name == "gemini":  # Antigravity print mode: workspace = code snapshot + work dir; approvals auto-denied
         return [AGY, "--model", opt("gemini", "model", "gemini-4-hydrogen-high"),
-                "--add-dir", CODE, "--output-format", "stream-json"] + (["--conversation", sid] if sid else []), False
+                "--add-dir", CODE] + (["--add-dir", ALSO_DIR] if ALSO else []) + ["--output-format", "stream-json"] + (["--conversation", sid] if sid else []), False
     # claude: Claude Code print mode on the local login, read-only tools; no user settings/hooks, MCP servers or
     # skills (they cost ~150k context tokens per turn); prompt on stdin
     cmd = [CLAUDE, "-p", "--output-format", "stream-json", "--verbose", "--setting-sources", "project,local",
-           "--strict-mcp-config", "--disable-slash-commands", "--add-dir", CODE, "--tools", "Read", "Grep", "Glob"]
+           "--strict-mcp-config", "--disable-slash-commands", "--add-dir", CODE] + (["--add-dir", ALSO_DIR] if ALSO else []) + [
+           "--tools", "Read", "Grep", "Glob"]
     for key in ("model", "effort"):
         if opt("claude", key):
             cmd += ["--" + key, opt("claude", key)]
@@ -519,9 +545,9 @@ def run_agent(name, timeout=1800, do_sync=True):
     proto = protocol()
     phash = __import__("hashlib").sha1((proto + rules(name)).encode()).hexdigest()[:12]
     head, head_line = snapshot_head()
-    fresh_prompt = (proto + f"\n\n# You are: {name}\n\nThe codebase is at {CODE} (read-only). The full thread is in "
+    fresh_prompt = (proto + f"\n\n# You are: {name}\n\nThe codebase is at {CODE} (read-only). " + also_note() + "The full thread is in "
                     f"{work}/THREAD.md: read it first. Reply to the new message(s) addressed to you: {new}. "
-                    "Only read files under the codebase and that thread file. " + rules(name))
+                    "Only read files under the codebase" + (", the extra snapshots" if ALSO else "") + " and that thread file. " + rules(name))
     log = open(os.path.join(STATE, name + ".log"), "a")
     s = session(name)
     why = stale(name, s, phash)
@@ -539,7 +565,7 @@ def run_agent(name, timeout=1800, do_sync=True):
         else:
             unseen = [m for m in msgs if m["id"] > s.get("upto", 0) and m["from"] != name]
             prompt = ("# New in the thread since your last turn\n\n" + ("".join(fmt(m) for m in unseen) or "(nothing)\n")
-                      + (f"\nThe code snapshot at {CODE} changed since your last turn (HEAD {head_line}); re-read files you rely on.\n"
+                      + (f"\nThe code snapshot at {CODE} changed since your last turn (HEAD {head_line}); re-read files you rely on. " + also_note() + "\n"
                          if head != s.get("head") else "")
                       + f"\nReply to the message(s) addressed to you: {new}. Same rules as before: " + rules(name))
         log.write(f"\n=== {time.ctime()} replying to {new}: " + (f"fresh session ({why})" if why else
