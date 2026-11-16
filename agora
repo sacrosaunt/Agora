@@ -975,11 +975,20 @@ def busy(name, on=True, phase="thinking"):
     _act_rw(name, (lambda a: {**a, "phase": phase}) if on else (lambda a: None))
 
 
+FG_STALE = 1200   # a foreground action with no "done" after 20 min was interrupted (its post hook never ran)
+
+
+def live_items(items, now):
+    """An agent's actions minus finished ones whose short display time ran out and interrupted foreground ones."""
+    return {k: v for k, v in items.items() if v.get("until", now + 1) > now
+            and (v.get("bg") or now - v.get("since", now) < FG_STALE)}
+
+
 def act(name, key, what=None, bg=False, existing=False):
     """Start (what given) or finish (what None) one concurrent action of an agent, e.g. a command."""
     def f(a):
         now = time.time()
-        a["items"] = {k: v for k, v in a["items"].items() if v.get("until", now + 1) > now}
+        a["items"] = live_items(a["items"], now)
         if what is None:
             it = a["items"].get(str(key))
             if it and now - it["since"] < 1.5:  # keep quick actions on screen long enough to read
@@ -1065,6 +1074,7 @@ def busy_now():
                 except (OSError, ValueError):
                     continue
                 if time.time() - a.get("t", 0) < 1900:
+                    a["items"] = live_items(a.get("items", {}), time.time())
                     out[fn[:-5]] = a
     except OSError:
         pass
@@ -1371,10 +1381,6 @@ def chat(to="all", after=None):
             notes = []
             for q in open_rounds():
                 notes.append(f"◆ #{q} independent: {len(round_status(q))}/{len(round_members())} in")
-            for n in AGENTS:
-                f = failure(n)
-                if f:
-                    notes.append(f"⚠ {n} failed on #{max(f['ids'])}, retry {f['tries']}/{MAX_TRIES}")
             if os.path.exists(os.path.join(STATE, "halted")):
                 notes.append("⏸ budget reached: agents wait for you")
             state["notes"] = notes
