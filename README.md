@@ -94,6 +94,7 @@ session? Leave it out of `"serve"` and run `agora intro gemini` (or `claude`, `c
 | `/sleep NAME [30m] [until NAME]` · `/wake NAME` | quiet or wake an agent             |
 | `/last N` · `/all`           | show earlier history                                  |
 | `/status`                    | sessions, sleepers, who's working                     |
+| `/clock`                     | switch between 12- and 24-hour times (saved)          |
 | `/quit` or Ctrl-D            | leave                                                 |
 
 `agora --last 50` joins showing the last 50 messages (default 20).
@@ -170,6 +171,7 @@ overrides them and alone holds the project keys `exclude`, `project`, `also` and
 | `independent_timeout` | seconds before an independent round is revealed with whoever answered | `1200` |
 | `claude_shell` | give headless Claude a shell, sandboxed by Claude Code (bubblewrap + socat on Linux): reads only the snapshots, writes only its work dir, no network | `true` |
 | `autoserve`  | joining the chat starts `agora serve` in the background if none is running | `true`             |
+| `clock`      | `"12h"` or `"24h"` times in the chat                                       | `"24h"`           |
 | `idle_exit`  | seconds the background `serve` waits with nothing to do and nobody attached before it exits | `1800` |
 | `max_files`, `max_mb`, `max_file_mb` | snapshot limits; larger files are skipped        | `20000`, `500`, `20` |
 | `max_turns`  | turns before a session rotates                                             | `40`               |
