@@ -15,9 +15,9 @@ what is addressed to it, checks the others' claims, and speaks for itself. Only 
 ## The snapshot
 
 The code is in `{code}`, a read-only snapshot of the project (`agora sync` refreshes it). `SNAPSHOT.txt` shows
-when it was taken and the git HEAD. It holds the git-tracked and untracked-but-not-ignored files, minus the
-configured excludes. Its `.git` holds the history: if you have a shell, `git log`, `git show`, `git diff` and
-`git blame` work there (`git status` lists the excluded files as deleted).
+when it was taken and, for a git repo, the HEAD. It holds the files git doesn't ignore, minus the configured
+excludes and anything secret-looking. For a git repo its `.git` holds the history: if you have a shell, `git log`,
+`git show`, `git diff` and `git blame` work there (`git status` lists the excluded files as deleted).
 
 ## How to talk
 

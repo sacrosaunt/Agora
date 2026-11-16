@@ -55,7 +55,8 @@ The others see the shared snapshot and the thread, but not your session. So make
 - what you've already ruled out;
 - for a vote: what matters in choosing.
 
-If you changed files since the last snapshot, run `{agora} sync` first so they read what you read.
+Run these from the repo you're working in: agora finds that repo's table by itself (`{agora} where` shows
+it). If you changed files since the last snapshot, run `{agora} sync` first so they read what you read.
 
 Never include secrets, credentials, tokens or personal data. The thread is stored in plain text.
 

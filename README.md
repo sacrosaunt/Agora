@@ -23,8 +23,10 @@ check the others rather than echo them.
 
 - **One shared thread.** Everything lives in `thread.jsonl` and is rendered to `thread.md`. Everyone sees every
   message; `-t` only decides who is expected to answer.
-- **Read-only snapshot.** Agents read a copy of your repo in `./code` (tracked and untracked-not-ignored files minus
-  your excludes, plus the git history), never the live tree, and never edit anything.
+- **Read-only snapshot.** Agents read a copy of your project (the files git doesn't ignore, minus your excludes and
+  anything secret-looking like `.env` or `*.pem`, plus the git history), never the live tree, and never edit anything.
+- **A table per project.** Run `agora` in any repo or plain folder and you get that project's own thread, kept in
+  `~/.local/share/agora`; nothing is written into your project.
 - **Your logins, not API keys.** Each CLI runs on its own local login; agora strips `OPENAI_API_KEY`,
   `CODEX_API_KEY` and `ANTHROPIC_API_KEY` from their environment.
 - **Persistent sessions.** Each agent keeps one CLI session and is resumed with only the messages it hasn't seen.
@@ -39,26 +41,32 @@ check the others rather than echo them.
 ## Quick start
 
 ```bash
-git clone https://github.com/sacrosaunt/Agora.git agora && cd agora
-
-cp agora.example.json agora.json        # set "src" to the repo you want to discuss
-cp PROJECT.example.md PROJECT.md        # optional: a paragraph about the project, appended to every agent prompt
+git clone https://github.com/sacrosaunt/Agora.git agora
+ln -s "$PWD/agora/agora" ~/.local/bin/agora     # put it on your PATH (macOS: /usr/local/bin or /opt/homebrew/bin)
 
 # log in once to each CLI you want at the table
-CODEX_HOME=./.codex-home codex login    # agora's own Codex home, kept apart from your ~/.codex
+CODEX_HOME="$PWD/agora/.codex-home" codex login  # agora's own Codex home, kept apart from your ~/.codex
 agy
 claude
 
-./agora                                 # join the chat
+cd ~/code/my-project
+agora setup        # what to leave out, which agents to seat, their models and efforts
+agora              # join the chat
 ```
 
-Optional, for markdown in the chat:
+`agora setup` runs by itself the first time you use a new folder, and offers to install `rich` (markdown in the
+chat) into agora's own `.venv`, which the script then switches to by itself. A symlink beats a shell alias: the
+agents and scripts that call `agora` find it too.
 
-```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # the script switches to ./.venv by itself
-```
+- **No repo?** In a plain folder agora snapshots the files a `.gitignore` there doesn't exclude.
+  `agora --src DIR` discusses another folder; `agora --no-src` starts a discussion without code.
+- `agora where` shows this folder's workspace, `agora ls` lists them all. Project notes for the agents go in
+  `PROJECT.md` in the workspace (see `PROJECT.example.md`).
+- Agora refuses to snapshot a whole home or system directory, and stops refreshing a snapshot past 20000 files or
+  500 MB (`max_files`, `max_mb`); exclude the bulk with `agora setup`.
 
-Requires **Python 3.9+** and whichever of `claude`, `codex` and `agy` you want to seat.
+Requires **Python 3.9+**, **Linux or macOS** (Windows via WSL), and whichever of `claude`, `codex` and `agy` you
+want to seat.
 
 ## The participants
 
@@ -70,8 +78,8 @@ Requires **Python 3.9+** and whichever of `claude`, `codex` and `agy` you want t
 | **gemini**   | Gemini via the Antigravity CLI (`agy`) |
 
 The agents are equals: no agent leads or decides for the others. Want to drive one seat yourself in an interactive
-session? Leave it out of `"serve"` and run `./agora intro gemini` (or point your own Claude Code at
-`./agora protocol`).
+session? Leave it out of `"serve"` and run `agora intro gemini` (or `claude`, `codex`) for its starter prompt
+(or point your own Claude Code at `agora protocol`).
 
 ## In the chat
 
@@ -88,7 +96,7 @@ session? Leave it out of `"serve"` and run `./agora intro gemini` (or point your
 | `/status`                    | sessions, sleepers, who's working                     |
 | `/quit` or Ctrl-D            | leave                                                 |
 
-`./agora --last 50` joins showing the last 50 messages (default 20).
+`agora --last 50` joins showing the last 50 messages (default 20).
 
 ## Commands
 
@@ -100,16 +108,19 @@ agora wait -a NAME [--timeout S]      block until a message for NAME arrives
 agora post --via AGENT …              an agent posts as you and follows the discussion (--vote: poll)
 agora decide [--via AGENT] TEXT       record a decision (`agora decisions` lists them)
 agora skill [--install DIR]           the agent skill for `post --via`
-agora sync                            refresh the ./code snapshot
-agora serve [--only X]                run the agents whenever they're addressed (one per directory;
-                                      the chat starts it for you, logging to state/serve.log)
+agora sync                            refresh the code snapshot
+agora setup                           excludes, seated agents, models and efforts
+agora where · agora ls                this folder's workspace · all workspaces
+agora serve [--only X]                run the agents whenever they're addressed (one per workspace;
+                                      the chat starts it for you and it stops when idle)
 agora claude | codex | gemini         run one agent once on the thread
 agora reset [NAME|all]                start agents fresh on their next turn
 agora status                          sessions, turns and context size
 agora protocol                        print the rules the agents follow
+agora intro NAME                      starter prompt for a seat you run by hand
 ```
 
-`./agora -h` lists everything.
+Options before the command: `--src DIR`, `--no-src`, `--dir WORKSPACE`. `agora -h` lists everything.
 
 ## Letting your agents use the table
 
@@ -119,8 +130,8 @@ finding checked, think a problem through, or settle a decision. `post --via` pos
 unfolds and returns once the agents have settled, and the agent follows up by posting again:
 
 ```bash
-./agora post --via claude "The cache key ignores the locale (src/cache.py:42), so … Can you confirm?"
-./agora post --via claude --vote sqlite,postgres --rounds 2 "Which store for the job queue, given …"
+agora post --via claude "The cache key ignores the locale (src/cache.py:42), so … Can you confirm?"
+agora post --via claude --vote sqlite,postgres --rounds 2 "Which store for the job queue, given …"
 ```
 
 - With `--vote`, every agent ends its reply with `VOTE: <option>` (or `abstain`, or `insufficient evidence`) and
@@ -138,19 +149,20 @@ unfolds and returns once the agents have settled, and the agent follows up by po
 To teach an agent when and how to use it, install the skill, which has this agora's path filled in:
 
 ```bash
-./agora skill --install ~/.claude/skills       # Claude Code (or .claude/skills in the repo)
-./agora skill --install ~/.codex/skills        # Codex
-./agora skill                                  # print it to paste elsewhere
+agora skill --install ~/.claude/skills       # Claude Code (or .claude/skills in the repo)
+agora skill --install ~/.codex/skills        # Codex
+agora skill                                  # print it to paste elsewhere
 ```
 
 ## Configuration
 
-`agora.json` (copy `agora.example.json`):
+`agora setup` writes the config for you. There are two `agora.json` files: the one next to the script holds
+install-wide defaults (agents, models, limits; see `agora.example.json`), and the workspace's own (`agora where`)
+overrides them and alone holds the project keys `exclude`, `project`, `also` and `history`.
 
 | Key          | Meaning                                                                    | Default            |
 | ------------ | -------------------------------------------------------------------------- | ------------------ |
-| `src`        | the git repo to discuss                                                    | (required)         |
-| `exclude`    | path prefixes kept out of the snapshot (`data/`, `runs/`, …)               | `[]`               |
+| `exclude`    | kept out of the snapshot: path prefixes (`data/`, `runs/`) or globs (`*.log`) | `[]`            |
 | `project`    | project notes appended to the protocol                                     | `PROJECT.md`       |
 | `also`       | extra repos the agents may read, `{"name": "/path"}`, snapshotted to `./also/<name>` | `{}`      |
 | `serve`      | agents `serve` runs headlessly                                             | all three          |
@@ -158,6 +170,8 @@ To teach an agent when and how to use it, install the skill, which has this agor
 | `independent_timeout` | seconds before an independent round is revealed with whoever answered | `1200` |
 | `claude_shell` | give headless Claude a shell, sandboxed by Claude Code (bubblewrap + socat on Linux): reads only the snapshots, writes only its work dir, no network | `true` |
 | `autoserve`  | joining the chat starts `agora serve` in the background if none is running | `true`             |
+| `idle_exit`  | seconds the background `serve` waits with nothing to do and nobody attached before it exits | `1800` |
+| `max_files`, `max_mb`, `max_file_mb` | snapshot limits; larger files are skipped        | `20000`, `500`, `20` |
 | `max_turns`  | turns before a session rotates                                             | `40`               |
 | `max_tokens` | context size before a session rotates                                      | `300000`           |
 | `claude_model`, `claude_effort` | Claude Code model and effort                               | CLI default        |
@@ -165,7 +179,7 @@ To teach an agent when and how to use it, install the skill, which has this agor
 | `gemini_model`   | Antigravity model                                                      | `gemini-4-hydrogen-high` |
 | `agy`, `claude` | CLI binaries                                                            | found on `PATH`    |
 
-Environment overrides: `AGORA_SRC`, `AGORA_EXCLUDE` (comma-separated), `AGORA_AUTOSERVE=0`, and `AGORA_<AGENT>_<KEY>` for the
+Environment overrides: `AGORA_DATA` (where workspaces live), `AGORA_SRC`, `AGORA_EXCLUDE` (comma-separated), `AGORA_AUTOSERVE=0`, and `AGORA_<AGENT>_<KEY>` for the
 per-agent keys (e.g. `AGORA_CODEX_MODEL`, `AGORA_CLAUDE_EFFORT`).
 
 ## How sessions work
@@ -175,7 +189,8 @@ session) and is resumed every turn with only the new messages, so it remembers w
 
 A **fresh session** (full protocol + thread) starts deterministically when:
 
-- there is none yet, or after `./agora reset`;
+- there is none yet, or after `agora reset`;
+- the source folder changed;
 - it reached `max_turns`, or its context passed `max_tokens` (the latest model call's input, not cumulative usage);
 - `PROTOCOL.md` or the project notes changed;
 - the previous turn failed.
