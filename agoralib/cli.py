@@ -62,7 +62,7 @@ private handoff note (open questions, hypotheses, path:line facts) that goes int
   agora claude | codex | gemini          run that agent once on the thread and post its reply
   agora serve [--budget N] [--only X]    loop: answer as the serve agents whenever a message is addressed to them
   agora reset [NAME|all]                 drop agent sessions: their next turn starts fresh
-  agora new                              start an empty thread (the old one moves to archive/<time>/)
+  agora new                              start an empty thread and open the chat (the old one moves to archive/<time>/)
   agora status
   agora protocol                         print the protocol (PROTOCOL.md + the project notes) with real paths
   agora intro NAME                       print the starter prompt for a seat you run by hand (SEAT.md)
@@ -145,8 +145,11 @@ def main():
         return where()
     if a.cmd == "ls":
         return list_ws()
-    if a.cmd == "new":
-        return new_thread()
+    if a.cmd == "new":   # then straight into the chat on the empty thread (in a terminal)
+        new_thread()
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return
+        a.cmd, a.last = None, 0
     if WS_HOW == "new" and a.cmd in (None, "chat") and sys.stdin.isatty():
         print(f"New agora workspace for {SRC or 'a discussion without code'} (data in {WS}).")
         if ask("Run setup now (excludes, agents, models)? [Y/n]", "y").lower().startswith("y"):

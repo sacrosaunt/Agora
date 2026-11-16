@@ -208,7 +208,7 @@ def new_thread():
         if not stop_serve():
             sys.exit("couldn't stop this workspace's serve (pid in state/serve.lock); stop it and try again")
         if not os.path.exists(THREAD) or not load():
-            print("the thread is already empty")
+            print("the thread is already empty", file=sys.stderr)
             return
         dest = os.path.join(WS, "archive", time.strftime("%Y%m%d-%H%M%S"))
         keep = {"plain.git", "snapshot.json", "serve.json"}   # the snapshot's history and the serve options
