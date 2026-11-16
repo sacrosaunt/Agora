@@ -1,1 +1,2 @@
 rich  # markdown rendering in the live chat (optional; falls back to plain text)
+pyreadline3; sys_platform == "win32"  # line editing in the live chat on Windows

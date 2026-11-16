@@ -1,5 +1,5 @@
 """Running the agents: sessions, CLI commands, sandboxes, streaming, one turn."""
-import argparse, fcntl, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
+import argparse, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
 from .compat import *  # noqa: F401,F403
 from .ws import *  # noqa: F401,F403
 from .store import *  # noqa: F401,F403
@@ -18,9 +18,9 @@ def session(name, val=None, drop=False):
         return None
     if val is not None:
         os.makedirs(SESS, exist_ok=True)
-        with open(f + ".tmp", "w") as g:
+        with open(tmpname(f), "w") as g:
             json.dump(val, g)
-        os.replace(f + ".tmp", f)
+        replace(tmpname(f), f)
         return val
     try:
         return json.load(open(f))
@@ -376,8 +376,10 @@ def _run_agent(name, timeout=1800, do_sync=True):
         log.write(why + "; retrying fresh\n")
     if r.returncode or not text:   # the messages stay unseen: serve retries with backoff, then gives up visibly
         f = note_failure(name, new, r.returncode)
-        log_turn(name, new, "failed", note=f"rc {r.returncode}, try {f['tries']}/{MAX_TRIES}")
-        print(f"{name} failed (rc {r.returncode}); see {STATE}/{name}.log", file=sys.stderr)
+        err = f": {res['error']}" if res.get("error") else ""   # e.g. the CLI's login has expired
+        log.write(f"failed (rc {r.returncode}){err}\n")
+        log_turn(name, new, "failed", note=f"rc {r.returncode}{err}, try {f['tries']}/{MAX_TRIES}")
+        print(f"{name} failed (rc {r.returncode}){err}; see {os.path.join(STATE, name + '.log')}", file=sys.stderr)
         return None
     to, zz, wf, re_ = msgs[-1]["from"] if msgs else "all", False, [], list(new)
     for _ in range(4):  # directive lines: TO: ..., RE: ..., SLEEP, WAIT: name, in any order

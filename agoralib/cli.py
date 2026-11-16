@@ -66,7 +66,7 @@ private handoff note (open questions, hypotheses, path:line facts) that goes int
   agora protocol                         print the protocol (PROTOCOL.md + the project notes) with real paths
   agora intro NAME                       print the starter prompt for a seat you run by hand (SEAT.md)
 """
-import argparse, fcntl, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
+import argparse, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
 from .compat import *  # noqa: F401,F403
 from .ws import *  # noqa: F401,F403
 from .store import *  # noqa: F401,F403
@@ -215,7 +215,7 @@ def main():
                 sys.exit(3)
             time.sleep(2)
     elif a.cmd == "skill":
-        s = template(os.path.join("skills", "agora", "SKILL.md"), agora=SCRIPT)
+        s = template(os.path.join("skills", "agora", "SKILL.md"), agora=COMMAND)
         if not a.install:
             print(s, end="")
         else:

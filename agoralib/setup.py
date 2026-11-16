@@ -1,5 +1,5 @@
 """where, ls and the interactive setup."""
-import argparse, fcntl, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
+import argparse, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
 from .compat import *  # noqa: F401,F403
 from .ws import *  # noqa: F401,F403
 from .store import *  # noqa: F401,F403
@@ -122,7 +122,7 @@ def setup():
     except ImportError:
         if ask("\nInstall rich (markdown in the chat) into agora's own .venv? [y/N]", "n").lower().startswith("y"):
             subprocess.run([sys.executable, "-m", "venv", VENV], check=True)
-            subprocess.run([os.path.join(VENV, "bin", "pip"), "install", "-q", "-r",
+            subprocess.run([venv_python(VENV), "-m", "pip", "install", "-q", "-r",
                             os.path.join(INSTALL, "requirements.txt")], check=True)
     print("\nSaved. `agora` joins the chat; `agora sync` refreshes the snapshot.")
 

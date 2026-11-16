@@ -1,5 +1,5 @@
 """The read-only code snapshot: listing, excluding and copying the source."""
-import argparse, fcntl, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
+import argparse, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
 from .compat import *  # noqa: F401,F403
 from .ws import *  # noqa: F401,F403
 from .store import *  # noqa: F401,F403
@@ -84,7 +84,7 @@ def _snap(src, dest, exclude=()):
     if total > max_mb * 2**20:
         raise TooBig(f"{total / 2**20:.0f} MB (limit {max_mb:.0f} MB, config max_mb)")
     new, old = dest + ".new", dest + ".old"
-    shutil.rmtree(new, ignore_errors=True)
+    rmtree(new)
     for f in files:
         d = os.path.join(new, f)
         os.makedirs(os.path.dirname(d), exist_ok=True)
@@ -107,11 +107,11 @@ def _snap(src, dest, exclude=()):
                  + ("Git history is in .git (git log/show/diff/blame); `git status` shows the excluded files as "
                     "deleted.\n" if hist else "") if src else
                  f"No source folder: this discussion has no code ({time.strftime('%Y-%m-%d %H:%M:%S')}).\n")
-    shutil.rmtree(old, ignore_errors=True)
+    rmtree(old)
     if os.path.exists(dest):
-        os.rename(dest, old)
-    os.rename(new, dest)
-    shutil.rmtree(old, ignore_errors=True)
+        rename(dest, old)
+    rename(new, dest)
+    rmtree(old)
     return len(files), dig.hexdigest(), head
 
 
@@ -136,7 +136,7 @@ def _sync():
     if os.path.isdir(ALSO_DIR):  # drop snapshots of repos no longer configured
         for d in os.listdir(ALSO_DIR):
             if d not in ALSO:
-                shutil.rmtree(os.path.join(ALSO_DIR, d), ignore_errors=True)
+                rmtree(os.path.join(ALSO_DIR, d))
     with open(os.path.join(STATE, "snapshot.json"), "w") as fh:  # content digest: sessions note real changes only
         json.dump({"digest": __import__("hashlib").sha1(dig.encode()).hexdigest()[:12], "head": head.strip()}, fh)
     return n

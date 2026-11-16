@@ -1,5 +1,5 @@
 """The thread and its state: messages, sleep, rounds, turns, failures, activity, lock files."""
-import argparse, fcntl, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
+import argparse, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
 from .compat import *  # noqa: F401,F403
 from .ws import *  # noqa: F401,F403
 
@@ -29,9 +29,9 @@ def tag(m):
 
 def wjson(path, obj):
     """Write JSON atomically (a crash leaves the old file or the new one, never half of one)."""
-    with open(path + ".tmp", "w") as f:
+    with open(tmpname(path), "w") as f:
         json.dump(obj, f)
-    os.replace(path + ".tmp", path)
+    replace(tmpname(path), path)
 
 
 def decisions(msgs):
@@ -53,10 +53,10 @@ def render(msgs):
         out.append("\n" + decisions_text(msgs))
     for m in msgs:
         out.append(f"\n---\n### #{m['id']} {author(m)} → {', '.join(m['to'])}{tag(m)} · {m['ts']}\n\n{m['text'].rstrip()}\n")
-    tmp = MD + ".tmp"
+    tmp = tmpname(MD)
     with open(tmp, "w") as f:
         f.writelines(out)
-    os.replace(tmp, MD)
+    replace(tmp, MD)
 
 
 PING = re.compile(r"(?<![\w@])@(" + "|".join(AGENTS) + r"|all)\b", re.I)
@@ -91,7 +91,7 @@ def post(frm, to, text, via=None, mode=None, extra=None, hold=(), re_=()):
         busy(frm, False)
         return held
     with open(THREAD, "a+") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+        lock(f)
         f.seek(0)
         n = sum(1 for l in f if l.strip())
         m = {"id": n + 1, "from": frm, "to": to, "ts": time.strftime("%Y-%m-%d %H:%M:%S"), "text": text}
@@ -104,8 +104,8 @@ def post(frm, to, text, via=None, mode=None, extra=None, hold=(), re_=()):
         m.update(extra or {})
         f.write(json.dumps(m, ensure_ascii=False) + "\n")
         f.flush()
-        fcntl.flock(f, fcntl.LOCK_UN)
-    render(load())
+        render(load())   # under the lock, so a slower writer never replaces thread.md with an older thread
+        unlock(f)
     if mode == "independent":   # the round waits for exactly the agents asked when it opened
         d = os.path.join(INDEP, str(m["id"]))
         os.makedirs(d, exist_ok=True)
@@ -274,7 +274,7 @@ def reveal_due(force=False):
         return
     os.makedirs(INDEP, exist_ok=True)
     with open(os.path.join(INDEP, ".lock"), "w") as lk:   # one revealer at a time
-        fcntl.flock(lk, fcntl.LOCK_EX)
+        lock(lk)
         for q in open_rounds():
             _reveal(q, force)
 
@@ -379,7 +379,7 @@ def _act_rw(name, fn, existing=False):
     os.makedirs(ACT, exist_ok=True)
     p = os.path.join(ACT, name + ".json")
     with open(p + ".lock", "a") as lk:
-        fcntl.flock(lk, fcntl.LOCK_EX)
+        lock(lk)
         if existing and not os.path.exists(p):
             return
         try:
@@ -392,9 +392,9 @@ def _act_rw(name, fn, existing=False):
                 os.unlink(p)
         else:
             a["t"] = time.time()
-            with open(p + ".tmp", "w") as f:
+            with open(tmpname(p), "w") as f:
                 json.dump(a, f)
-            os.replace(p + ".tmp", p)
+            replace(tmpname(p), p)
 
 
 def busy(name, on=True, phase="thinking"):
@@ -488,6 +488,8 @@ def claude_event(name, e, res):
                 busy(name, True, "thinking")
     elif t == "result":
         res["text"] = "" if e.get("is_error") else (e.get("result") or "")
+        if e.get("is_error"):
+            res["error"] = str(e.get("result") or e.get("subtype") or "error")[:300]
 
 
 def busy_now():

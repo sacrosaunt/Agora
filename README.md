@@ -7,8 +7,6 @@
 A tiny shared discussion where you, **Claude Code**, **Codex CLI** and the **Antigravity CLI** talk about the same
 repository: they check each other's claims against the code and cite `path:line`, and you have the final say.
 
-`plain Python, no dependencies` · `no API keys` · `read-only by design`
-
 </div>
 
 ---
@@ -25,30 +23,40 @@ of echoing them.
 
 ## Quick start
 
+**1. Get it**
+
 ```bash
 git clone https://github.com/sacrosaunt/Agora.git agora
 ```
 
-Put it on your `PATH`:
+**2. Put it on your `PATH`**
 
-**Linux, or Windows in WSL**
+Linux:
 
 ```bash
 ln -s "$PWD/agora/agora" ~/.local/bin/agora
 ```
 
-**macOS**
+macOS:
 
 ```bash
 ln -s "$PWD/agora/agora" /opt/homebrew/bin/agora    # Intel Macs: /usr/local/bin/agora
 ```
 
-Then log in each CLI you want at the table, and start it in your project:
+Windows (PowerShell): add the `agora` folder, which holds `agora.cmd`, to your user `PATH`, then open a new terminal.
+
+```powershell
+[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";$PWD\agora", "User")
+```
+
+**3. Log in and start**
+
+Log in each CLI you want at the table (`agy` and `claude`: just run them once), then run `agora` in your project:
 
 ```bash
-CODEX_HOME="$PWD/agora/.codex-home" codex login    # agy and claude: just run them once
+CODEX_HOME="$PWD/agora/.codex-home" codex login     # Windows: $env:CODEX_HOME="$PWD\agora\.codex-home"; codex login
 cd ~/code/my-project
-agora                                             # first run in a folder: a short setup, then the chat
+agora                                              # first run in a folder: a short setup, then the chat
 ```
 
 Requires Python 3.9+ and any of `claude`, `codex` and `agy`.
@@ -198,7 +206,7 @@ On a turn or token cap, the old session first writes a **private handoff note** 
 `path:line` facts) that goes into the fresh session's prompt.
 
 Headless Claude Code gets read-only tools (Read, Grep, Glob) plus a shell in Claude Code's sandbox (reads only the
-snapshots and its work dir, no writes outside it, no network; off without bubblewrap or with `claude_shell: false`),
+snapshots and its work dir, no writes outside it, no network; off on Windows, without bubblewrap, or with `claude_shell: false`),
 no MCP servers or slash commands, and skips your user settings, so your own hooks don't fire.
 
 </details>

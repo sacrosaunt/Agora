@@ -1,5 +1,5 @@
 """The serve loop and the locks that keep one per workspace (started and stopped on demand)."""
-import argparse, fcntl, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
+import argparse, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
 from .compat import *  # noqa: F401,F403
 from .ws import *  # noqa: F401,F403
 from .store import *  # noqa: F401,F403
@@ -58,7 +58,7 @@ def ensure_serve():
         subprocess.Popen([sys.executable, SCRIPT, "--dir", WS, "serve", "--auto"]
                          + (["--only", pol["only"]] if pol.get("only") else [])
                          + (["--budget", str(pol["budget"])] if pol.get("budget") else []),
-                         stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, cwd=WS)
+                         stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, cwd=WS, **detached())
         for _ in range(100):   # until the child holds the serve lock (so the next starter sees it running)
             time.sleep(0.1)
             f = serve_lock()

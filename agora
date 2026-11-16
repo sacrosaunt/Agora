@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
 """agora: a shared discussion thread for several coding agents reading one codebase (`agora -h` for usage;
 the code is in agoralib/)."""
-import os, sys
+import os, subprocess, sys
 
 INSTALL = os.path.dirname(os.path.realpath(__file__))
 VENV = os.path.join(INSTALL, ".venv")  # optional: `agora setup` offers to create it (for rich)
-if os.path.isfile(os.path.join(VENV, "bin", "python")) and os.path.realpath(sys.prefix) != os.path.realpath(VENV):
-    os.execv(os.path.join(VENV, "bin", "python"), [os.path.join(VENV, "bin", "python"), os.path.realpath(__file__)]
-             + sys.argv[1:])
+PY = os.path.join(VENV, "Scripts", "python.exe") if sys.platform == "win32" else os.path.join(VENV, "bin", "python")
+venv = os.path.isfile(PY) and os.path.realpath(sys.prefix) != os.path.realpath(VENV)
+utf8 = sys.platform == "win32" and not sys.flags.utf8_mode   # Windows: files and pipes in UTF-8, not the ANSI code page
+if venv or utf8:
+    cmd = [PY if venv else sys.executable] + (["-X", "utf8"] if sys.platform == "win32" else []) + [
+        os.path.realpath(__file__)] + sys.argv[1:]
+    if sys.platform == "win32":   # no exec on Windows: run it (Ctrl-C is the child's to handle), pass its exit code on
+        import signal
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        sys.exit(subprocess.Popen(cmd).wait())
+    os.execv(cmd[0], cmd)
 sys.path.insert(0, INSTALL)
 from agoralib.cli import main  # noqa: E402
 

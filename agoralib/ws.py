@@ -1,16 +1,18 @@
 """Workspaces and configuration: where the thread, state and snapshot live, and what the source is."""
-import argparse, fcntl, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
+import argparse, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
 from .compat import *  # noqa: F401,F403
 
 
 INSTALL = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))   # the program: venv, templates, Codex home, default config
 SCRIPT = os.path.join(INSTALL, "agora")   # the launcher
+COMMAND = os.path.join(INSTALL, "agora.cmd") if WINDOWS else SCRIPT   # what a shell (or an agent) runs
 VENV = os.path.join(INSTALL, ".venv")  # optional: python -m venv .venv && .venv/bin/pip install -r requirements.txt
 NAMES = ("user", "claude", "codex", "gemini")
 AGENTS = ("claude", "codex", "gemini")
 WS_KEYS = ("src", "exclude", "project", "also", "history")   # workspace-only config: never inherited from the install
 DATA = os.path.realpath(os.path.expanduser(os.environ.get("AGORA_DATA") or os.path.join(
-    os.environ.get("XDG_DATA_HOME") or os.path.join("~", ".local", "share"), "agora")))
+    (os.environ.get("LOCALAPPDATA") if WINDOWS else os.environ.get("XDG_DATA_HOME"))
+    or os.path.join("~", ".local", "share"), "agora")))
 SECRETS = (".env*", "*.pem", "*.key", "*.p12", "*.pfx", "*.keystore", "*.jks", "id_rsa*", "id_dsa*", "id_ecdsa*",
            "id_ed25519*", "*credentials*", ".netrc", ".npmrc", ".pypirc", ".pgpass", ".ssh/", ".aws/", ".gnupg/",
            ".codex-home/", ".claude/")   # always left out of snapshots, at any depth
@@ -99,9 +101,9 @@ def resolve_ws():
         if new["src"] != meta.get("src") or not meta:
             check_src(new["src"], ws)
             os.makedirs(ws, exist_ok=True)
-            with open(meta_p + ".tmp", "w") as f:
+            with open(tmpname(meta_p), "w") as f:
                 json.dump(new, f, indent=1)
-            os.replace(meta_p + ".tmp", meta_p)
+            replace(tmpname(meta_p), meta_p)
             return ws, new["src"], "new" if not meta else "changed"
     return ws, meta.get("src"), "found"
 
@@ -127,7 +129,7 @@ WS, SRC0, WS_HOW = resolve_ws()
 THREAD, MD, STATE = (os.path.join(WS, x) for x in ("thread.jsonl", "thread.md", "state"))
 CODE, CONFIG = os.path.join(WS, "code"), os.path.join(WS, "agora.json")
 ICONFIG = os.path.join(INSTALL, "agora.json")   # install-wide defaults (models, binaries, serve, limits)
-AGORA = SCRIPT + ("" if WS == INSTALL else " --dir " + (WS if re.fullmatch(r"[\w./~-]+", WS) else json.dumps(WS)))
+AGORA = COMMAND + ("" if WS == INSTALL else " --dir " + (WS if re.fullmatch(r"[\w./~:\\-]+", WS) else json.dumps(WS)))
 
 
 def save_cfg(path, upd):
@@ -136,10 +138,10 @@ def save_cfg(path, upd):
     for k in [k for k, v in cfg.items() if v in ("", None)]:
         del cfg[k]
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path + ".tmp", "w") as f:
+    with open(tmpname(path), "w") as f:
         json.dump(cfg, f, indent=2)
         f.write("\n")
-    os.replace(path + ".tmp", path)
+    replace(tmpname(path), path)
 
 
 

@@ -1,5 +1,5 @@
 """The live terminal chat."""
-import argparse, fcntl, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
+import argparse, json, os, re, shutil, subprocess, sys, tempfile, time  # noqa: F401
 from .compat import *  # noqa: F401,F403
 from .ws import *  # noqa: F401,F403
 from .store import *  # noqa: F401,F403
@@ -37,8 +37,12 @@ def clip(s, width):
 def chat(to="all", after=None):
     """Live view: prints every new message as it lands and reads your replies from the prompt."""
     ensure_serve()
-    import readline, threading  # noqa: F401  (readline gives line editing + history to input())
-    tty = sys.stdout.isatty()
+    import threading
+    try:
+        import readline   # line editing + history for input() (Windows: pyreadline3)
+    except ImportError:   # no line buffer to redraw: a message arriving mid-line is printed above a fresh prompt
+        readline = None
+    tty = ansi_terminal()
     col = (lambda c, t: f"\033[{c}m{t}\033[0m") if tty else (lambda c, t: t)
     state = {"to": to, "last": after if after is not None else (load()[-1]["id"] if load() else 0),
              "busy": {}, "stop": False, "mine": set(), "shown": False, "frame": 0, "reading": False,
@@ -52,19 +56,38 @@ def chat(to="all", after=None):
         return col("2", f"[to {state['to']}] ") + "> "
 
     def rl_prompt():   # for input(): escapes inside \001…\002 so readline counts only the visible characters
-        return f"\001\033[2m\002[to {state['to']}] \001\033[0m\002> " if tty else plain_prompt()
+        return f"\001\033[2m\002[to {state['to']}] \001\033[0m\002> " if tty and not WINDOWS else plain_prompt()
 
     try:   # readline's cursor position (a byte offset in the line), for redraws while you edit mid-line
         import ctypes
-        rl_point = ctypes.c_int.in_dll(ctypes.CDLL(readline.__file__), "rl_point")
+        rl_point = None if WINDOWS else ctypes.c_int.in_dll(ctypes.CDLL(readline.__file__), "rl_point")
     except Exception:
         rl_point = None
+
+    def line_buffer():
+        return readline.get_line_buffer() if readline else ""
+
+    def write_then_prompt(text, buf):
+        """Write text, then the prompt and the line being typed if input() is waiting. pyreadline3 (Windows)
+        repaints at the screen position where it drew the prompt, so it is told the new one and redraws itself."""
+        if not state["reading"]:
+            return sys.stdout.write(text)
+        if WINDOWS and readline and hasattr(readline, "rl"):
+            sys.stdout.write(text)
+            sys.stdout.flush()
+            try:
+                readline.rl.prompt_begin_pos = readline.rl.console.pos()
+                readline.rl._update_line()
+                return
+            except Exception:
+                pass
+        sys.stdout.write(text + prompt() + hl_input(buf))
 
     def up():
         """Rows from the cursor up to the prompt's first row."""
         if not state["reading"]:
             return 0
-        buf = readline.get_line_buffer()
+        buf = line_buffer()
         if rl_point is not None:
             buf = buf.encode()[:max(0, rl_point.value)].decode(errors="ignore")
         return (vwidth(plain_prompt()) + vwidth(buf)) // max(1, shutil.get_terminal_size().columns)
@@ -111,12 +134,12 @@ def chat(to="all", after=None):
     def emit(text):
         """Print above the prompt, keeping the typing line (if any) directly above what you are typing."""
         with lock:
-            buf = readline.get_line_buffer()
-            out = "\r" + mv(up() + (1 if state["shown"] else 0)) + "\033[J" + text + "\n"
+            buf = line_buffer()
+            out = ("\r" + mv(up() + (1 if state["shown"] else 0)) + "\033[J" if tty else "") + text + "\n"
             state["shown"] = has_line()
             if state["shown"]:
                 out += typing_line() + "\n"
-            sys.stdout.write(out + (prompt() + hl_input(buf) if state["reading"] else ""))  # else input() draws it
+            write_then_prompt(out, buf)   # the prompt only while input() waits (else input() draws it)
             sys.stdout.flush()
 
     def hl_input(buf):
@@ -132,7 +155,7 @@ def chat(to="all", after=None):
     def paint_input():
         """Colour @name pings in the line being typed. readline draws it plain; this repaints the same characters in
         place (cursor saved and restored), so readline's view of the screen stays right; wrapped lines included."""
-        buf = readline.get_line_buffer()
+        buf = line_buffer()
         if buf == state.get("painted") or not state["reading"]:
             return
         before, state["painted"] = state.get("painted") or "", buf
@@ -157,10 +180,10 @@ def chat(to="all", after=None):
                         continue
                     sys.stdout.write("\0337" + mv(up() + 1) + "\r\033[K" + line + "\0338")
                 elif line is not None:
-                    sys.stdout.write("\r" + mv(up()) + "\033[J" + line + "\n" + (prompt() + hl_input(readline.get_line_buffer()) if state["reading"] else ""))
+                    write_then_prompt("\r" + mv(up()) + "\033[J" + line + "\n", line_buffer())
                     state["shown"] = True
                 elif state["shown"]:
-                    sys.stdout.write("\r" + mv(up() + 1) + "\033[J" + (prompt() + hl_input(readline.get_line_buffer()) if state["reading"] else ""))
+                    write_then_prompt("\r" + mv(up() + 1) + "\033[J", line_buffer())
                     state["shown"] = False
                 else:
                     continue
@@ -266,8 +289,11 @@ def chat(to="all", after=None):
     def reading():  # readline has drawn its prompt and waits for keys: from now on redraws must redraw the prompt
         with lock:
             state["reading"] = True
-    readline.set_pre_input_hook(reading)
+    if readline:
+        readline.set_pre_input_hook(reading)
     while True:
+        if not readline:
+            reading()
         try:
             line = input(rl_prompt())
         except (EOFError, KeyboardInterrupt):
