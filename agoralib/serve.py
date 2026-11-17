@@ -229,7 +229,7 @@ def serve_loop(a):
                 busy(name, True)
                 busy_task(name, "drafting the conclusion" if any(m.get("conclude") for m in pend)
                           else "finalizing the conclusion" if any(m.get("finalize") for m in pend)
-                          else "checking the conclusion" if any(m.get("conclusion_draft") for m in pend) else None)
+                          else "reviewing the conclusion" if any(m.get("conclusion_draft") for m in pend) else None)
                 with wlock:
                     working.add(name)
                 threading.Thread(target=turn, args=(name, [m["id"] for m in pend]), daemon=True).start()

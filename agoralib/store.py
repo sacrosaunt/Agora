@@ -603,7 +603,7 @@ def busy(name, on=True, phase="thinking"):
 
 
 def busy_task(name, task):
-    """What a working agent's turn is for (e.g. "checking the conclusion"), shown before its phase or tool."""
+    """What a working agent's turn is for (e.g. "drafting the conclusion"), shown before its phase or tool."""
     _act_rw(name, lambda a: {**a, "task": task} if a is not None else a)
 
 
