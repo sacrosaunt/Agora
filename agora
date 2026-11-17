@@ -15,7 +15,10 @@ if venv or utf8:
         import signal
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         std = {k: f for k, f in (("stdin", sys.stdin), ("stdout", sys.stdout), ("stderr", sys.stderr)) if f}
-        sys.exit(subprocess.Popen(cmd, **std).wait())   # handles passed on explicitly: a redirect reaches the child
+        os.environ["AGORA_LAUNCHER"] = "1"   # the child exits 75 to be run again on updated code (/update)
+        while (rc := subprocess.Popen(cmd, **std).wait()) == 75:   # handles passed on explicitly: a redirect reaches it
+            pass
+        sys.exit(rc)
     os.execv(cmd[0], cmd)
 sys.path.insert(0, INSTALL)
 try:

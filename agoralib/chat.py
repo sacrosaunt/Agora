@@ -49,6 +49,7 @@ Commands
 /stop [NAME]              stop every turn, running or queued (NAME: only its reply; whoever waits on it goes on)
 /restart [now]            restart the serve on the code now on disk (e.g. after git pull); it waits for the
                           replies in progress, or with now stops them and they are answered again
+/update                   pull the latest agora, restart the serve on it and reopen this chat
 /sleep NAME [30m] [until NAME], /wake NAME
 /last N, /all             show the last N messages, or the whole thread
 /add [NAME], /remove [NAME]   bring an agent into this chat, or take it out (no name: pick from a list)
@@ -295,7 +296,7 @@ def chat(to="all", after=None):
             sys.stdout.flush()
 
     SLASH = ("help", "independent", "ind", "audit", "design", "decide", "decisions", "sleep", "wake", "to", "last", "all",
-             "status", "clock", "add", "remove", "kick", "stop", "restart", "reveal", "quit", "q", "exit")   # the commands the input loop below accepts
+             "status", "clock", "add", "remove", "kick", "stop", "restart", "update", "reveal", "quit", "q", "exit")   # the commands the input loop below accepts
 
     def recips(s):
         """'codex,@claude' (spaces or commas) as a recipient list 'codex,claude'; '' for none; False after
@@ -588,6 +589,7 @@ def chat(to="all", after=None):
             state["reading"] = True
     if readline:
         readline.set_pre_input_hook(reading)
+    reopen = False   # /update: start the chat again on the new code once the loop ends
     while True:
         if not readline:
             reading()
@@ -719,6 +721,18 @@ def chat(to="all", after=None):
                                     f"the serve restarts once {', '.join(wait)} finish{'es' if len(wait) == 1 else ''} "
                                     "(/restart now stops them)" if wait else "restarting the serve")))
             continue
+        if line == "/update":
+            emit(col("2", "updating agora…"))
+            from .update import self_update
+            changed, text = self_update()
+            emit(col("36" if changed else "31" if text.startswith(("update failed", "git isn't")) else "2", text))
+            if changed:
+                wait = restart_serve() if serve_running() else []   # none running: the reopened chat starts one
+                emit(col("36", "◇ the serve restarts on the new code" + (f" once {', '.join(wait)} finish"
+                     f"{'es' if len(wait) == 1 else ''}" if wait else "") + "; reopening the chat"))
+                reopen = True
+                break
+            continue
         if line == "/reveal":
             qs = [q for q in open_rounds() if any(h.get("text") for h in round_status(q).values())]
             if not qs:
@@ -793,6 +807,10 @@ def chat(to="all", after=None):
             emit(col("33", f"{', '.join(away)} {'is' if len(away) == 1 else 'are'} not in this chat, so nobody "
                            f"answers as {' or '.join(away)}: /add {','.join(away)} brings {'it' if len(away) == 1 else 'them'} in"))
     state["stop"] = True
+    if reopen:
+        from .update import relaunch
+        if relaunch(SELF + ["--dir", WS, "chat", "-t", state["to"], "--after", str(state["last"])]) is False:
+            print("agora is updated: open the chat again (agora) to use the new version")
 
 
 __all__ = [k for k in list(globals()) if not k.startswith("__")]

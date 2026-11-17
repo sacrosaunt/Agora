@@ -81,6 +81,7 @@ from .serve import *  # noqa: F401,F403
 from .chat import *  # noqa: F401,F403
 from .converse import *  # noqa: F401,F403
 from .setup import *  # noqa: F401,F403
+from .update import self_update  # noqa: E402
 
 
 GROUPS = (   # the short command list shown after a usage mistake (agora -h has the full reference)
@@ -156,6 +157,7 @@ def main():
     p.add_argument("--re", metavar="N[,N]", help="the messages this one answers (shown as ↩ #N in the header)")
     p = sp.add_parser("chat"); p.add_argument("-t", "--to", default="all")
     p.add_argument("--last", type=int, default=20, help="show this many earlier messages on joining")
+    p.add_argument("--after", type=int, help=argparse.SUPPRESS)   # /update reopens the chat after this message
     p = sp.add_parser("read"); p.add_argument("-a", "--as", dest="who"); p.add_argument("--new", action="store_true")
     p.add_argument("--last", type=int); p.add_argument("--json", action="store_true")
     p = sp.add_parser("wait"); p.add_argument("-a", "--as", dest="who", required=True)
@@ -187,6 +189,7 @@ def main():
     p.add_argument("--via", metavar="AGENT", help="an agent recording it for the user"); p.add_argument("text", nargs="+")
     sp.add_parser("decisions", help="list the recorded decisions")
     sp.add_parser("sync"); sp.add_parser("status")
+    sp.add_parser("update", help="pull the latest agora (git) and restart this workspace's serve on it")
     x = sp.add_parser("setup", help="review excludes, the agents that answer, web search (--models: models, efforts)")
     x.add_argument("--models", action="store_true", help="also pick each agent's model and effort")
     sp.add_parser("where", help="this folder's workspace, source and config")
@@ -237,6 +240,8 @@ def main():
         msgs = load()
         if not msgs and getattr(a, "dir", None) is None and sys.stdout.isatty():
             hint_other_threads()
+        if getattr(a, "after", None) is not None:
+            return chat(a.to, after=a.after)
         last = a.last if a.last is not None else 20
         return chat(getattr(a, "to", "all"), after=msgs[-min(last, len(msgs))]["id"] - 1 if msgs and last else None)
     if a.cmd == "post" and a.via:
@@ -401,6 +406,15 @@ def main():
         else:
             done = [n for n in names if stop_turn(n, "drop")]
             print(f"stopped {', '.join(done)}" if done else "nobody of " + ", ".join(names) + " is working on a reply")
+    elif a.cmd == "update":
+        changed, text = self_update()
+        print(text)
+        if changed and serve_running():
+            wait = restart_serve()
+            print("the serve restarts on it" + (f" once {', '.join(wait)} finish{'es' if len(wait) == 1 else ''}" if wait else "")
+                  + "; serves of other workspaces restart with `agora restart` there")
+        if not changed and text.startswith(("update failed", "git isn't")):
+            sys.exit(1)
     elif a.cmd == "restart":
         was = serve_running()
         wait = restart_serve(now=a.now)

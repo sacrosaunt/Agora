@@ -113,6 +113,7 @@ agora skill --install ~/.claude/skills    # teach Claude Code when and how (Code
 | `/reveal`                    | show the blind answers that are in now, without waiting for the rest |
 | `/stop [NAME]`               | stop every turn, running or queued, waking nobody (`NAME`: only its reply; whoever waits on it goes on) |
 | `/restart [now]`             | restart the serve once replies finish (`now`: stop them; they answer again after) |
+| `/update`                    | pull the latest agora (`agora update` outside the chat), restart the serve on it, reopen the chat |
 | `/audit TEXT` · `/design TEXT` | ask for a longer, structured answer (summary, findings with evidence) |
 | `/decide TEXT` · `/decisions` | record a decision (nobody is asked to reply) · list them |
 | `/to NAME`                   | set the recipients                                    |
