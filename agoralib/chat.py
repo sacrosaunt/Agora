@@ -412,7 +412,7 @@ def chat(to="all", after=None):
             w = line.split()[0]
             near = difflib.get_close_matches(w[1:].lower(), SLASH, 1, 0.6)
             emit(col("31", f"unknown command {w}" + (f" (did you mean /{near[0]}?)" if near else "")
-                     + "; start with // to post it as text"))
+                     + "; /help lists the commands, // at the start posts it as text"))
             continue
         elif mm:
             mode, line = {"ind": "independent", "decide": "decision"}.get(mm.group(1), mm.group(1)), mm.group(2).strip()

@@ -79,8 +79,53 @@ from .converse import *  # noqa: F401,F403
 from .setup import *  # noqa: F401,F403
 
 
+GROUPS = (   # the short command list shown after a usage mistake (agora -h has the full reference)
+    ("talk", (("agora", "join the live chat (shows the last 20 messages)"),
+              ("post TEXT", "post as user (-a NAME: as an agent; --via AGENT: an agent asking for you)"),
+              ("read / wait -a NAME", "read new messages / block until one arrives"),
+              ("decide TEXT / decisions", "record / list decisions"))),
+    ("agents", ((" | ".join(AGENTS) or "AGENT", "run that agent once on the thread"),
+                ("sleep / wake", "pause / resume an agent"),
+                ("reset [NAME]", "drop agent sessions; next turn starts fresh"),
+                ("intro NAME / skill", "starter prompt / skill for an agent you run yourself"))),
+    ("workspace", (("where / ls", "this folder's workspace / all workspaces"),
+                   ("setup", "excludes, seated agents, models"),
+                   ("sync / status / new", "refresh the code snapshot / state / start an empty thread"))),
+)
+
+
+class Parser(argparse.ArgumentParser):
+    """Usage mistakes: one clear line, a suggestion for a mistyped command, and the short command list."""
+
+    def error(self, message):
+        tty = sys.stderr.isatty() and ansi_terminal()
+        c = (lambda code, t: f"\033[{code}m{t}\033[0m") if tty else (lambda code, t: t)
+        m = re.match(r"argument cmd: invalid choice: '([^']*)'", message)
+        out = []
+        if m:
+            import difflib
+            names = sorted(self._subparsers._group_actions[0].choices) if self._subparsers else []
+            near = difflib.get_close_matches(m.group(1), names, n=2, cutoff=0.6)
+            out.append(c("31", f"agora: unknown command '{m.group(1)}'")
+                       + (f". Did you mean {' or '.join(c('1', n) for n in near)}?" if near else ""))
+            out.append("")
+            w = max(len(cmd) for _, rows in GROUPS for cmd, _ in rows)
+            for title, rows in GROUPS:
+                out.append(c("2", title))
+                for cmd, what in rows:
+                    out.append(f"  {c('1', cmd.ljust(w))}  {what}")
+            out.append("")
+            out.append(c("2", "agora -h: every command and option; agora COMMAND -h: one command"))
+        else:
+            out.append(c("31", f"{self.prog}: {message}"))
+            out.append(c("2", f"usage: {self.format_usage().strip().removeprefix('usage: ')}"))
+            out.append(c("2", f"{self.prog} -h for details"))
+        sys.stderr.write("\n".join(out) + "\n")
+        sys.exit(2)
+
+
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = Parser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dir", help="the workspace dir to use (default: the one for this folder; env AGORA_DIR)")
     ap.add_argument("--src", help="the folder to discuss (default: this git repo, else this folder)")
     ap.add_argument("--no-src", action="store_true", help="a discussion without code")
