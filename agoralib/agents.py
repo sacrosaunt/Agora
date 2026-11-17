@@ -179,7 +179,13 @@ def rules(name):
             "To point at a specific earlier message, cite it inline as #N (e.g. `as codex showed in #42`); the "
             "chat highlights it.\n\n"
             "EVIDENCE (rules 1-2): cite path:line for claims about the code and say what you didn't check; check "
-            "another agent's claim in the code before agreeing with it.\n")
+            "another agent's claim in the code before agreeing with it.\n\n"
+            "OPEN POINTS: while you and another agent still disagree, end your message with a line "
+            "`OPEN: <each undecided point, a few words each>` (only points you are party to; drop the line once "
+            "none are left). Work them down rather than restating positions: concede, answer with new evidence, "
+            "merge the positions, or name the one check or run that would decide it. Going quiet on a point means "
+            "you accept the other position. Differences of priority or emphasis are not disagreements: agree on one "
+            "order.\n")
 
 
 LENGTH = {
@@ -194,18 +200,25 @@ LENGTH = {
                    "someone else may cover it. ",
     "crosscheck": "CROSS-CHECK: the independent answers to #{q} were just revealed together. Say where the others "
                   "are wrong or missed something, citing code, and whether any of them changed your mind; output "
-                  "only SLEEP if you agree and have nothing to add.",
+                  "only SLEEP if you agree and have nothing to add. Where the answers differ, list what is "
+                  "undecided in an OPEN: line (see OPEN POINTS) and propose one merged answer, e.g. a single "
+                  "priority order.",
     "conclude": "CONCLUSION of #{q}: its discussion has settled and you draft the conclusion for the user; the others "
                 "check the draft privately first. First line: the bottom line in one sentence. Then **Agreed**, "
-                "**Disputed** (who holds what, and why) and **Next step**, short bullets citing #N messages and "
-                "path:line where it matters. State each agent's position fairly, your own included, and add nothing "
-                "new. Not a decision: the user decides. Do not output SLEEP; no TO: line.",
+                "**Still open** and **Next step**, short bullets citing #N messages and path:line where it matters. "
+                "Use each agent's last word: a point someone conceded or stopped contesting is agreed, and different "
+                "priorities merge into one ordered **Next step**. **Still open** holds only points where agents' "
+                "latest messages still contradict each other (the last OPEN: lines): who holds what, why, and the "
+                "check or decision that would settle it; leave the section out if there are none. State each "
+                "agent's position fairly, your own included, and add nothing new. The user decides what to act on. "
+                "Do not output SLEEP; no TO: line.",
     "check": "CHECK the draft conclusion of #{q} (only the agents see it): object, citing the message or code, only if "
-             "it misstates your position or the evidence, or omits a live disagreement; otherwise output only SLEEP. "
+             "it misstates your position or the evidence, lists as open a point you have since conceded or never "
+             "contested, or omits a disagreement still live in your latest message; otherwise output only SLEEP. "
              "Your reply goes to the drafter only.",
     "finalize": "FINAL CONCLUSION of #{q}: the others checked your draft. Post the final version for the user in the "
                 "same shape: fix what they showed was misstated or missing; where you still disagree with an "
-                "objection, put it under **Disputed**. Cite only the discussion's messages, not the draft or the "
+                "objection, put it under **Still open**. Cite only the discussion's messages, not the draft or the "
                 "checks (the user doesn't see those). Do not output SLEEP; no TO: line.",
 }
 

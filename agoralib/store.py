@@ -396,7 +396,7 @@ def conclusion_open(q):
 
 
 def ask_conclusion(q, msgs):
-    """Ask one agent of round q to draft its conclusion (agreed, disputed, next step). The ask, the draft and the
+    """Ask one agent of round q to draft its conclusion (agreed, still open, next step). The ask, the draft and the
     others' checks are hidden from the user (agent bookkeeping); only the final conclusion is shown. Rotates over
     the round's served members by round id. Skips rounds with fewer than two answers."""
     d = os.path.join(INDEP, str(q))

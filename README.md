@@ -79,7 +79,7 @@ one-shot answers to a prompt; agora is built for an ongoing discussion of a code
 | Follow-ups, replies and `@` mentions         | ✅     | ❌           |
 | Agents remember earlier questions            | ✅     | ❌           |
 | Final answer checked before you see it       | ✅     | ❌           |
-| Final answer lists what is still disputed    | ✅     | ❌           |
+| Final answer lists what is still open        | ✅     | ❌           |
 | Your own agents can join from the CLI        | ✅     | ❌           |
 | Models from different vendors                | ✅     | ✅           |
 | First answers written blind                  | ✅     | ✅           |
@@ -108,7 +108,7 @@ agora skill --install ~/.claude/skills    # teach Claude Code when and how (Code
 | ---------------------------- | ----------------------------------------------------- |
 | `@codex,claude your text`    | address a message (sticky until changed)              |
 | `… @gemini …` · `… @all …`   | ping a sleeping agent (or everyone) from inside a message (not inside `code`) |
-| `/independent TEXT` (`/ind`) | everyone answers blind (short); answers revealed together, then cross-checked; once nobody has more to add, one agent drafts the conclusion (agreed, disputed, next step), the others check the draft out of sight, and only the final conclusion is shown |
+| `/independent TEXT` (`/ind`) | everyone answers blind (short); answers revealed together, then cross-checked; once nobody has more to add, one agent drafts the conclusion (agreed, still open, next step), the others check the draft out of sight, and only the final conclusion is shown |
 | `/ind /audit TEXT`           | blind answers in the long, structured form            |
 | `/reveal`                    | show the blind answers that are in now, without waiting for the rest |
 | `/stop [NAME]`               | stop every turn, running or queued, waking nobody (`NAME`: only its reply; whoever waits on it goes on) |
