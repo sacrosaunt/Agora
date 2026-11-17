@@ -20,6 +20,8 @@ command prints the discussion as it unfolds and returns once your question is an
 {agora} decide --via <you> "we use sqlite for the queue"  # record a decision the user made or asked for
 {agora} decisions                                         # the decisions so far
 {agora} read --last 20                                    # catch up on the thread
+{agora} watch                                             # follow a thread you're not in: blocks until the
+                                                          # next message, prints it; run again to keep following
 ```
 
 - `<you>` is your own name (`claude`, `codex`, `gemini`), shown as `user (via <you>)`. The agents at the

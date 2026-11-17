@@ -45,6 +45,8 @@ private handoff note (open questions, hypotheses, path:line facts) that goes int
                                          the thread and posts what you type
   agora read [-a NAME] [--new] [--last N] [--json]   --new: only unseen messages for NAME, then mark them seen
   agora wait -a NAME [--timeout S]       block until a message for NAME arrives, print it, mark seen
+  agora watch [--as ID] [--after N] [--timeout S]   observe a thread you are not seated in: block until any new
+                                         message, print it; repeat to follow (no seat, nothing marked read)
   agora post --via AGENT [-t to] [--vote a,b [--rounds N]] [--timeout S] [--mode M] [TEXT | -f FILE | -]
                                          an agent speaking for the user: posts as the user, prints the discussion
                                          as it happens and returns once the question is answered (prints the
@@ -83,6 +85,7 @@ GROUPS = (   # the short command list shown after a usage mistake (agora -h has 
     ("talk", (("agora", "join the live chat (shows the last 20 messages)"),
               ("post TEXT", "post as user (-a NAME: as an agent; --via AGENT: an agent asking for you)"),
               ("read / wait -a NAME", "read new messages / block until one arrives"),
+              ("watch", "observe without joining: block until the next message"),
               ("decide TEXT / decisions", "record / list decisions"))),
     ("agents", ((" | ".join(AGENTS) or "AGENT", "run that agent once on the thread"),
                 ("sleep / wake", "pause / resume an agent"),
@@ -151,6 +154,11 @@ def main():
     p = sp.add_parser("wait"); p.add_argument("-a", "--as", dest="who", required=True)
     p.add_argument("--timeout", type=float, default=0)
     p.add_argument("--until", help="block until this participant (e.g. codex) posts, or you are pinged")
+    p = sp.add_parser("watch", help="observe without a seat: block until the thread gets a new message, print it")
+    p.add_argument("--as", dest="who", default="watch", help="cursor name, so separate watchers don't share one")
+    p.add_argument("--after", type=int, help="print messages after this id (default: where this watcher left off; "
+                   "the first time, only messages from now on)")
+    p.add_argument("--timeout", type=float, default=0)
     p = sp.add_parser("skill", help="print the agent skill (SKILL.md) with this agora's paths, or install it")
     p.add_argument("--install", metavar="DIR", help="write DIR/agora/SKILL.md (e.g. ~/.claude/skills)")
     p = sp.add_parser("idle"); p.add_argument("-a", "--as", dest="who", required=True)
@@ -268,6 +276,29 @@ def main():
                 sleep_set(a.who, False)
                 if a.who != "user":
                     busy(a.who, True, "reading the new messages")
+                print("\n".join(fmt(m) for m in new))
+                return
+            if a.timeout and time.time() - t0 > a.timeout:
+                sys.exit(3)
+            time.sleep(2)
+    elif a.cmd == "watch":   # passive: no seat, no seen mark, no activity, never counted in a round
+        cur = os.path.join(STATE, f"watch.{re.sub(r'[^A-Za-z0-9_-]', '_', a.who)}.cursor")
+        msgs = load()
+        if a.after is not None:
+            after = a.after
+        else:
+            try:
+                after = int(open(cur).read())
+            except (OSError, ValueError):
+                after = msgs[-1]["id"] if msgs else 0
+        t0 = time.time()
+        while True:
+            new = [m for m in load() if m["id"] > after]
+            if new:
+                os.makedirs(STATE, exist_ok=True)
+                with open(tmpname(cur), "w") as f:
+                    f.write(str(new[-1]["id"]))
+                replace(tmpname(cur), cur)
                 print("\n".join(fmt(m) for m in new))
                 return
             if a.timeout and time.time() - t0 > a.timeout:
