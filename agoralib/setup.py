@@ -122,7 +122,7 @@ def setup():
         save_cfg(CONFIG, {"exclude": [] if r == "-" else r.split()})
     found = [n for n in AGENTS if shutil.which({"claude": CLAUDE, "codex": "codex", "gemini": AGY}[n])]
     print(f"\nAgent CLIs found: {', '.join(found) or 'none'}")
-    seat = ask("Which agents should answer automatically (space-separated)?", " ".join(n for n in AUTO if n in found)
+    seat = ask("Which agents should answer automatically (space-separated)?", " ".join(n for n in auto() if n in found)
                or " ".join(found)).split()
     inst = {"serve": [n for n in seat if n in AGENTS]}
     for n in inst["serve"]:

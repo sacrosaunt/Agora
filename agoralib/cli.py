@@ -63,6 +63,8 @@ private handoff note (open questions, hypotheses, path:line facts) that goes int
   agora where | ls                       this folder's workspace | all workspaces
   agora claude | codex | gemini          run that agent once on the thread and post its reply
   agora serve [--budget N] [--only X]    loop: answer as the serve agents whenever a message is addressed to them
+  agora add NAME[,NAME] / agora remove NAME[,NAME]   bring agents into this workspace's chat (served from the
+                                         next message on) or take them out; saved in the workspace's agora.json
   agora reset [NAME|all]                 drop agent sessions: their next turn starts fresh
   agora new                              start an empty thread and open the chat (the old one moves to archive/<time>/)
   agora status
@@ -88,6 +90,7 @@ GROUPS = (   # the short command list shown after a usage mistake (agora -h has 
               ("watch", "observe without joining: block until the next message"),
               ("decide TEXT / decisions", "record / list decisions"))),
     ("agents", ((" | ".join(AGENTS) or "AGENT", "run that agent once on the thread"),
+                ("add / remove NAME", "bring an agent into this chat / take it out"),
                 ("sleep / wake", "pause / resume an agent"),
                 ("reset [NAME]", "drop agent sessions; next turn starts fresh"),
                 ("intro NAME / skill", "starter prompt / skill for an agent you run yourself"))),
@@ -185,6 +188,9 @@ def main():
     sp.add_parser("ls", help="list the workspaces")
     for n in AGENTS:
         sp.add_parser(n, help=f"run {n} once headlessly on the thread")
+    for c, h in (("add", "bring agents into this chat (served from the next message on)"),
+                 ("remove", "take agents out of this chat")):
+        p = sp.add_parser(c, help=h); p.add_argument("names", nargs="+", metavar="NAME")
     p = sp.add_parser("reset", help="drop agent sessions; their next turn starts fresh"); p.add_argument("name", nargs="?", default="all")
     sp.add_parser("new", help="start an empty thread; the old one is archived")
     p = sp.add_parser("serve"); p.add_argument("--budget", type=int, default=BUDGET)
@@ -242,7 +248,7 @@ def main():
         except ValueError:
             sys.exit("--re takes message numbers, e.g. --re 12,14")
         m = post(a.who, a.to, text, mode=a.mode, hold=asked, re_=re_)
-        if not m.get("held") and any(for_me(m, x) for x in AUTO):
+        if not m.get("held") and any(for_me(m, x) for x in auto()):
             ensure_serve()
         if m.get("held"):
             print(f"held: independent round #{m['held']} is open; your answer is revealed with the others'")
@@ -351,6 +357,15 @@ def main():
               else f"posted #{m['id']}" if m else "no reply")
     elif a.cmd == "serve":
         serve_loop(a)
+    elif a.cmd in ("add", "remove"):
+        names = [x.strip().lstrip("@").lower() for n in a.names for x in n.split(",") if x.strip()]
+        bad = [n for n in names if n not in AGENTS]
+        if bad:
+            sys.exit(f"agora: no agent {bad[0]!r}; agents: {', '.join(AGENTS)}")
+        changed = seat(names, a.cmd == "add")
+        print(f"{', '.join(changed)} {'added to' if a.cmd == 'add' else 'removed from'} this chat" if changed
+              else f"{', '.join(names)} {'already' if a.cmd == 'add' else 'not'} in this chat")
+        print("in this chat: " + (", ".join(round_members()) or "nobody yet (agora add NAME)"))
     elif a.cmd == "reset":
         for n in (AGENTS if a.name == "all" else [a.name]):
             if session(n):
@@ -369,7 +384,7 @@ def main():
             se = session(n)
             print(f"  {n:8s} " + (f"session {se['id'][:8]}…: {se.get('turns', 0)}/{MAX_TURNS} turns, "
                                   f"{se.get('tokens', 0) // 1000}k/{MAX_TOKENS // 1000}k tokens, since {se.get('started')}"
-                                  if se else "no session (next turn starts fresh)") + (" [served]" if n in AUTO else ""))
+                                  if se else "no session (next turn starts fresh)") + (" [served]" if n in auto() else ""))
 
 
 __all__ = [k for k in list(globals()) if not k.startswith("__")]

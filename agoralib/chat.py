@@ -42,12 +42,72 @@ HELP = """@name,name at the start   address it (sticky); @name inside a message 
 /decide TEXT              record a decision; /decisions lists them
 /sleep NAME [30m] [until NAME], /wake NAME
 /last N, /all             show the last N messages, or the whole thread
+/add [NAME], /remove [NAME]   bring an agent into this chat, or take it out (no name: pick from a list)
 /status                   agents, sessions, unread counts
 /clock                    switch 12/24-hour times
 /quit or Ctrl-D           leave (// at the start posts a line beginning with / as text)"""
 
 
 HIST = 200   # messages printed again after a resize
+
+
+def choose(title, options, col):
+    """A checklist in the terminal: options [(name, note)]; ↑/↓ (or j/k) move, Space (or the item's number) ticks,
+    Enter confirms (the highlighted one when nothing is ticked), Esc or q cancels. Returns the ticked names, [] on
+    cancel. Draws below the cursor and erases itself."""
+    if WINDOWS:
+        import msvcrt
+        def key():
+            c = msvcrt.getwch()
+            if c in ("\x00", "\xe0"):
+                return {"H": "up", "P": "down"}.get(msvcrt.getwch(), "")
+            return c
+        restore = lambda: None
+    else:
+        import termios, tty, select
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        tty.setcbreak(fd)
+        restore = lambda: termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        def key():
+            c = os.read(fd, 1).decode(errors="ignore")
+            if c == "\x1b":
+                if not select.select([fd], [], [], 0.05)[0]:
+                    return "\x1b"   # Esc by itself
+                seq = os.read(fd, 8).decode(errors="ignore")
+                return {"[A": "up", "[B": "down", "OA": "up", "OB": "down"}.get(seq[:2], "")
+            return c
+    cur, ticked, drawn = 0, set(), 0
+    w = max(len(n) for n, _ in options)
+    try:
+        sys.stdout.write("\033[?25l")   # no cursor while picking
+        while True:
+            rows = [col("1", title) + col("2", "   ↑↓ move · Space tick · Enter confirm · Esc cancel")]
+            for i, (n, note) in enumerate(options):
+                mark = "[x]" if n in ticked else "[ ]"
+                line = f"{'›' if i == cur else ' '} {i + 1}. {mark} {n.ljust(w)}  "
+                rows.append((col("1", line) if i == cur else line) + col("2", note))
+            sys.stdout.write((f"\033[{drawn}A" if drawn else "") + "".join("\r\033[K" + r + "\n" for r in rows))
+            sys.stdout.flush()
+            drawn = len(rows)
+            k = key()
+            if k in ("up", "k"):
+                cur = (cur - 1) % len(options)
+            elif k in ("down", "j", "\t"):
+                cur = (cur + 1) % len(options)
+            elif k == " ":
+                ticked ^= {options[cur][0]}
+            elif k.isdigit() and 1 <= int(k) <= len(options):
+                cur = int(k) - 1
+                ticked ^= {options[cur][0]}
+            elif k in ("\r", "\n"):
+                return [n for n, _ in options if n in ticked] or [options[cur][0]]
+            elif k in ("\x1b", "q", "\x03", "\x04"):
+                return []
+    finally:
+        restore()
+        sys.stdout.write((f"\033[{drawn}A" if drawn else "") + "\r\033[J\033[?25h")
+        sys.stdout.flush()
 
 
 def chat(to="all", after=None):
@@ -181,7 +241,7 @@ def chat(to="all", after=None):
             sys.stdout.flush()
 
     SLASH = ("help", "independent", "ind", "audit", "design", "decide", "decisions", "sleep", "wake", "to", "last", "all",
-             "status", "clock", "quit", "q", "exit")   # the commands the input loop below accepts
+             "status", "clock", "add", "remove", "kick", "quit", "q", "exit")   # the commands the input loop below accepts
 
     def hl_input(buf):
         """The typed line with pings coloured, including every name in a leading @a,b recipient list, and a leading
@@ -243,18 +303,18 @@ def chat(to="all", after=None):
                 state["drawn"] = line
                 sys.stdout.flush()
 
-    def pings(out):  # @name mentions in bold, in that participant's colour
-        if not tty:
+    def pings(out, only=None):  # @name mentions in bold, in that participant's colour (only: just these names)
+        if not tty or only == []:
             return out
         def hl(g):
             c = COLORS.get(g.group(1).lower(), "37").removeprefix("1;")
             return f"\033[1;{c}m{g.group(0)}\033[22;39m"
-        return re.sub(r"(?<![\w@])@(" + "|".join(NAMES + ("all",)) + r")\b", hl, out, flags=re.I)
+        return re.sub(r"(?<![\w@])@(" + "|".join(only or NAMES + ("all",)) + r")\b", hl, out, flags=re.I)
 
     def render(m):
         head = (col(COLORS.get(m["from"], "0"), f"── #{m['id']} {author(m)}") + col("2", f" → {', '.join(m['to'])}")
                 + col("35", tag(m)) + col("2", f" · {hhmm(m['ts'])}"))
-        return head + "\n" + pings(md(m["text"]))
+        return head + "\n" + pings(md(m["text"]), [n for n in NAMES + ("all",) if mentioned(m["text"], n)])
 
     def show(m):
         state["hist"].append(m)
@@ -330,6 +390,9 @@ def chat(to="all", after=None):
                     emit(col("31", f"{n} gave up on {ids} {r['note']}; those messages are skipped"))
                 elif o == "budget":
                     emit(col("33", f"budget reached ({r['note']} since you spoke): agents wait for your next message"))
+                elif o == "roster":
+                    emit(col("36", f"◇ {r['note']}"))
+                    state["members"] = round_members()
                 elif o == "revealed":
                     emit(col("35", f"◆ independent round {ids} revealed: {r['note']}"))
             zz = {n: tuple((asleep(n) or {}).get("from") or ()) for n in AGENTS
@@ -405,6 +468,39 @@ def chat(to="all", after=None):
         if line == "/status":
             emit(subprocess.run(SELF + ["--dir", WS, "status"], capture_output=True, text=True).stdout.rstrip())
             continue
+        mr = re.match(r"/(add|remove|kick)(?:\s+(.*))?$", line)
+        if mr:
+            add, names = mr.group(1) == "add", [x.strip().lstrip("@").lower() for x in
+                                                 re.split(r"[\s,]+", mr.group(2) or "") if x.strip()]
+            cur = auto()
+            pool = [n for n in AGENTS if (n not in cur) == add]
+            bad = [n for n in names if n not in AGENTS]
+            if bad:
+                near = difflib.get_close_matches(bad[0], AGENTS, 1, 0.5)
+                emit(col("31", f"no agent {bad[0]!r}" + (f" (did you mean {near[0]}?)" if near else "")
+                         + f"; agents: {', '.join(AGENTS)}"))
+                continue
+            if not names and not pool:
+                emit(col("2", "every agent is already in this chat" if add else "no agent is served in this chat"))
+                continue
+            if not names:
+                if not tty:
+                    emit(col("31", f"usage: /{mr.group(1)} NAME[,NAME]; " + ("not in this chat: " if add else "in it: ")
+                             + ", ".join(pool)))
+                    continue
+                zz = state.get("zz") or {}
+                def note(n):
+                    if add:
+                        b = {"claude": CLAUDE, "codex": "codex", "gemini": AGY}[n]
+                        return "" if shutil.which(b) else "its CLI isn't installed here"
+                    return ("working now; finishes this turn" if n in state["busy"] else "asleep" if n in zz else "")
+                with lock:
+                    names = choose(("Add to" if add else "Remove from") + " this chat:", [(n, note(n)) for n in pool], col)
+                if not names:
+                    continue
+            if not seat(names, add):
+                emit(col("2", f"{', '.join(names)} {'already' if add else 'not'} in this chat"))
+            continue
         if line.startswith(("/sleep", "/wake")):
             cmd, *rest = line[1:].split()
             for n in (rest[:1] or [""])[0].split(","):
@@ -446,6 +542,7 @@ def chat(to="all", after=None):
                 continue
         if line.startswith("@"):
             tgt, _, rest = line[1:].partition(" ")
+            tgt = ",".join(t.lstrip("@") for t in tgt.split(","))   # @codex,@claude works like @codex,claude
             state["to"] = tgt
             if tgt.lower() != "all":   # a leading @all stays in the text: it asks everyone (no lead turn)
                 line = rest.strip()
@@ -473,6 +570,10 @@ def chat(to="all", after=None):
             state["hist"].append(m)
             emit(col("2", f"posted #{m['id']}"))
         state["posting"] = False
+        away = [n for n in AGENTS if (n in m["to"] or mentioned(m["text"], n)) and n not in round_members()]
+        if away:
+            emit(col("33", f"{', '.join(away)} {'is' if len(away) == 1 else 'are'} not in this chat, so nobody "
+                           f"answers as {' or '.join(away)}: /add {','.join(away)} brings {'it' if len(away) == 1 else 'them'} in"))
     state["stop"] = True
 
 

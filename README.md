@@ -86,11 +86,12 @@ agora skill --install ~/.claude/skills    # teach Claude Code when and how (Code
 | Type                         | To                                                    |
 | ---------------------------- | ----------------------------------------------------- |
 | `@codex,claude your text`    | address a message (sticky until changed)              |
-| `… @gemini …` · `… @all …`   | ping a sleeping agent (or everyone) from inside a message |
+| `… @gemini …` · `… @all …`   | ping a sleeping agent (or everyone) from inside a message (not inside `code`) |
 | `/independent TEXT` (`/ind`) | everyone answers blind; answers revealed together, then cross-checked |
 | `/audit TEXT` · `/design TEXT` | ask for a longer, structured answer (summary, findings with evidence) |
 | `/decide TEXT` · `/decisions` | record a decision (nobody is asked to reply) · list them |
 | `/to NAME`                   | set the recipients                                    |
+| `/add [NAME]` · `/remove [NAME]` | bring an agent into this chat or take it out (no name: pick from a list; also `agora add NAME`) |
 | `/sleep NAME [30m] [until NAME]` · `/wake NAME` | quiet or wake an agent             |
 | `/last N` · `/all`           | show earlier history                                  |
 | `/status`                    | sessions, sleepers, who's working                     |

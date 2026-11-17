@@ -110,10 +110,10 @@ def post(frm, to, text, via=None, mode=None, extra=None, hold=(), re_=()):
         d = os.path.join(INDEP, str(m["id"]))
         os.makedirs(d, exist_ok=True)
         wjson(os.path.join(d, "members.json"),
-              round_members() if "all" in to else [n for n in AGENTS if n in to or PING_ONE(n).search(text)])
+              round_members() if "all" in to else [n for n in AGENTS if n in to or mentioned(text, n)])
     elif mode == "decision":
         pass   # a record, not a question: nobody is asked to answer it
-    elif frm == "user" and to == ["all"] and not PING.search(text):
+    elif frm == "user" and to == ["all"] and not PING.search(uncode(text)):
         take_turns(m["id"])   # a plain question to all: one lead answer (an @agent or @all ping asks everyone)
     if frm != "user":
         busy(frm, False)
@@ -126,6 +126,16 @@ def PING_ONE(name):
     return re.compile(r"(?<![\w@])@" + name + r"\b", re.I)
 
 
+def uncode(text):
+    """text without its code (fenced blocks, `inline` spans): an @name there is an example, not a ping."""
+    return re.sub(r"`[^`\n]*`", " ", re.sub(r"(?ms)^\s*(```|~~~).*?(^\s*\1|\Z)", " ", text))
+
+
+def mentioned(text, name):
+    """name is pinged in text (@name outside code)."""
+    return bool(PING_ONE(name).search(uncode(text)))
+
+
 SLEEP = os.path.join(STATE, "sleep")  # <name>.json while an agent sleeps: it skips messages to "all" until pinged
 
 
@@ -134,10 +144,10 @@ def pinged(m, name):
     a user question opening an independent round (everyone answers it)."""
     if m["from"] == name:
         return False
-    if name in m["to"] or PING_ONE(name).search(m["text"]):
+    if name in m["to"] or mentioned(m["text"], name):
         return True
     return m["from"] == "user" and name in AGENTS and m.get("mode") != "decision" and (
-        m.get("mode") == "independent" and "all" in m["to"] or bool(PING_ONE("all").search(m["text"])))
+        m.get("mode") == "independent" and "all" in m["to"] or mentioned(m["text"], "all"))
 
 
 def asleep(name):
@@ -238,7 +248,7 @@ def round_members():
             return now - os.path.getmtime(os.path.join(STATE, n + ".seen")) < 7200
         except OSError:
             return False
-    return [n for n in AGENTS if n in AUTO or active(n)]
+    return [n for n in AGENTS if n in auto() or active(n)]
 
 
 def members(q):

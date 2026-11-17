@@ -42,10 +42,10 @@ def serve_policy(only=None, budget=None, save=False):
     return _json(p)
 
 
-def ensure_serve():
+def ensure_serve(quiet=False):
     """Start `agora serve` in the background (log: state/serve.log) unless one is running or autoserve is off."""
     client()
-    if not CFG.get("autoserve", True) or os.environ.get("AGORA_AUTOSERVE", "1") == "0" or not AUTO:
+    if not CFG.get("autoserve", True) or os.environ.get("AGORA_AUTOSERVE", "1") == "0" or not auto():
         return
     with lockfile("spawn.lock") as sp:   # one starter at a time: two clients must not both start a serve
         lock(sp)
@@ -65,14 +65,17 @@ def ensure_serve():
             if f is None:
                 break
             f.close()
-    print(f"started agora serve for {', '.join(pol.get('only', '').split(',') if pol.get('only') else AUTO)} "
-          f"(log: {os.path.join(STATE, 'serve.log')})", file=sys.stderr)
+    if not quiet:
+        print(f"started agora serve for {', '.join(pol.get('only', '').split(',') if pol.get('only') else auto())} "
+              f"(log: {os.path.join(STATE, 'serve.log')})", file=sys.stderr)
 
 
 def serve_loop(a):
     """`agora serve`: answer as the serve agents whenever a message is addressed to them."""
     import threading
-    who = [x for x in (a.only.split(",") if a.only else AUTO)]
+    def roster():
+        return a.only.split(",") if a.only else list(auto())   # re-read every pass: `agora add` / remove
+    who = roster()
     held = serve_lock()   # one serve per workspace (kept open for the life of the process)
     if held is None:
         sys.exit(0 if a.auto else "agora serve is already running (see state/serve.lock)")
@@ -112,6 +115,9 @@ def serve_loop(a):
     if os.path.exists(halted):   # left over from an earlier serve: recomputed below
         os.unlink(halted)
     while True:
+        if roster() != who:
+            print(f"{time.strftime('%H:%M:%S')} now serving {roster()}", flush=True)
+            who[:] = roster()   # in place: quiet() reads it too
         reveal_due()
         msgs = load()
         todo = []
@@ -168,6 +174,31 @@ def serve_loop(a):
                         return
                 cl.close()
         time.sleep(2)
+
+
+def seat(names, add, by="user"):
+    """`agora add` / `agora remove`: put names into this workspace's served agents, or take them out (saved in the
+    workspace's agora.json). An added agent starts from the next message (its fresh session still reads the
+    thread); a removed one finishes a turn it is in, then answers no more. Logged so every open chat shows it.
+    Returns the names that changed."""
+    cur = list(auto())
+    changed = [n for n in AGENTS if n in names and (n in cur) != add]
+    if not changed:
+        return []
+    save_cfg(CONFIG, {"serve": [n for n in AGENTS if (n in cur or n in changed) and not (n in changed and not add)]})
+    msgs = load()
+    for n in changed:
+        if add and msgs:
+            seen(n, max(seen(n), msgs[-1]["id"]))   # not the backlog: what came before is context, not questions
+        elif not add:   # out of the roll call now, not when its last read ages out (an agent run by hand that
+            p = os.path.join(STATE, n + ".seen")   # reads again is back in by itself)
+            if os.path.exists(p):
+                t = time.time() - 7300
+                os.utime(p, (t, t))
+    log_turn(by, [], "roster", note=f"{', '.join(changed)} {'added to' if add else 'removed from'} this chat by {by}")
+    if add:
+        ensure_serve(quiet=True)
+    return changed
 
 
 def stop_serve():

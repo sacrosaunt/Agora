@@ -31,7 +31,7 @@ def settle(q, timeout, show=print):
     up. Ends early when the discussion goes quiet for 2 min with turns missing, and at timeout. Returns
     (messages, outcomes {agent: [str]}, reason, status) with status "answered", "incomplete" or "timeout"."""
     t0, shown, calm, quiet = time.time(), q["id"] - 1, 0, None
-    expect = [n for n in AUTO if pinged(q, n) or "all" in q["to"] and (asleep(n) or {}).get("why") != "user"]
+    expect = [n for n in auto() if pinged(q, n) or "all" in q["to"] and (asleep(n) or {}).get("why") != "user"]
     while True:
         msgs = load()
         for m in msgs:
@@ -43,7 +43,7 @@ def settle(q, timeout, show=print):
         rows = [r for r in turns_since(t0 - 5) if set(r["ids"]) & disc]
         done = {r["name"] for r in rows if r["outcome"] in ("posted", "slept", "held", "gave up")}
         # an agent's messages stay unread until its reply is posted, so this also covers turns in progress
-        live = [n for n in AUTO if any(m["id"] in disc and m["id"] > seen(n) and for_me(m, n) for m in msgs)]
+        live = [n for n in auto() if any(m["id"] in disc and m["id"] > seen(n) and for_me(m, n) for m in msgs)]
         held = [r for r in open_rounds() if r in disc]
         calm = 0 if live or held else calm + 1
         missing = [n for n in expect if n not in done]
@@ -127,7 +127,7 @@ def converse(via, to, text, options=None, rounds=1, timeout=1800.0, mode=None):
     round. Exit code: 0 settled (vote: consensus), 3 timed out, 4 no consensus, 5 incomplete (an agent asked
     never took its turn), 6 majority, 7 insufficient evidence."""
     ensure_serve()
-    if not AUTO:
+    if not auto():
         print("note: no agents are run by `agora serve` here; nothing will answer automatically", file=sys.stderr)
     if options:
         keys = [vkey(o) for o in options]
@@ -156,7 +156,7 @@ def converse(via, to, text, options=None, rounds=1, timeout=1800.0, mode=None):
         if not options:
             return 0 if status == "answered" else 5
         votes, bad = tally(new, options)
-        redo = [n for n in AUTO if n not in votes]
+        redo = [n for n in auto() if n not in votes]
         if redo:   # one more chance within the round for agents with no valid vote
             nq = post("user", ",".join(redo), " ".join("@" + n for n in redo) + ": you gave no valid vote on #"
                       f"{q['id']}. Reply with your vote now, choosing exactly one of: {', '.join(options)} (or "
@@ -165,11 +165,11 @@ def converse(via, to, text, options=None, rounds=1, timeout=1800.0, mode=None):
             if status == "timeout":
                 return 3
             votes, bad = tally(new + more, options)
-        absent = [n for n in AUTO if n not in votes and n not in bad]
+        absent = [n for n in auto() if n not in votes and n not in bad]
         print("votes: " + (", ".join(f"{n} {v}" for n, (v, _) in votes.items()) or "none")
               + (f"; invalid: {', '.join(f'{n} {v!r}' for n, v in bad.items())}" if bad else "")
               + (f"; no vote: {', '.join(absent)}" if absent else ""))
-        res = verdict(votes, AUTO, rnd == rounds)
+        res = verdict(votes, auto(), rnd == rounds)
         if res:
             label, pick, code = res
             print(f"{label}" + (f": {pick}" if pick and label != "INSUFFICIENT EVIDENCE" else ""))

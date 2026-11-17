@@ -226,7 +226,12 @@ def protocol():
             s = s.rstrip() + "\n\n" + f.read()
     return s
 
-AUTO = tuple(CFG.get("serve") or AGENTS)  # agents the serve loop runs headlessly
+def auto():
+    """The agents the serve loop runs headlessly here, read fresh from the config (so `agora add` / `remove` and
+    /add, /remove in a chat take effect at once). No "serve" key: all of them; an empty list: none."""
+    cfg = _json(ICONFIG) if WS == INSTALL else {**_json(ICONFIG), **_json(CONFIG)}
+    s = cfg.get("serve")
+    return tuple(n for n in AGENTS if n in s) if isinstance(s, list) else AGENTS
 
 
 __all__ = [k for k in list(globals()) if not k.startswith("__")]
