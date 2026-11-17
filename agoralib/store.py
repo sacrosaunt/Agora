@@ -23,8 +23,10 @@ def tag(m):
     re_ = (" ↩ " + ", ".join(f"#{i}" for i in m["re"][-4:])) if m.get("re") else ""
     if m.get("independent"):
         return re_ + f" ◆ independent answer to #{m['independent']}"
+    if m.get("conclusion"):
+        return re_ + f" ◆ conclusion of #{m['conclusion']}"
     return re_ + {"independent": " ◆ independent", "audit": " ◆ audit", "design": " ◆ design",
-                  "decision": " ◆ decision"}.get(m.get("mode"), "")
+                  "decision": " ◆ decision", "conclude": " ◆ conclude"}.get(m.get("mode"), "")
 
 
 def wjson(path, obj):
@@ -60,7 +62,7 @@ def render(msgs):
 
 
 PING = re.compile(r"(?<![\w@])@(" + "|".join(AGENTS) + r"|all)\b", re.I)
-MODES = ("short", "audit", "design", "independent", "decision")
+MODES = ("short", "audit", "design", "independent", "decision", "conclude")
 INDEP = os.path.join(STATE, "independent")  # <qid>/<agent>.json: answers held until the round is revealed
 
 
@@ -326,6 +328,58 @@ def _reveal(q, force):
              + (f"; nothing to add: {', '.join(quiet)}" if quiet else ""))
 
 
+def discussion(q, msgs):
+    """Ids of q and every message answering it, directly or down a reply chain (the `re` links)."""
+    ids = {q["id"] if isinstance(q, dict) else q}
+    for m in msgs:
+        if m["id"] > min(ids) and set(m.get("re") or ()) & ids:
+            ids.add(m["id"])
+    return ids
+
+
+CONCLUDE = CFG.get("conclude", True)   # once a revealed round's discussion settles, one agent drafts its conclusion
+CONCLUDE_WINDOW = 3 * 3600             # rounds revealed longer ago than this are left alone (e.g. after an upgrade)
+
+
+def conclude_pending(q):
+    """Round q was revealed recently and its conclusion hasn't been asked for (or skipped) yet."""
+    d = os.path.join(INDEP, str(q))
+    try:
+        return CONCLUDE and not os.path.exists(os.path.join(d, "conclude")) \
+            and time.time() - os.path.getmtime(os.path.join(d, "revealed")) < CONCLUDE_WINDOW
+    except OSError:
+        return False
+
+
+def revealed_rounds():
+    try:
+        return sorted(int(d) for d in os.listdir(INDEP) if d.isdigit()
+                      and os.path.exists(os.path.join(INDEP, d, "revealed")))
+    except OSError:
+        return []
+
+
+def settled(q, msgs, working=()):
+    """Round q's discussion has gone quiet: no agent at work and no served agent with an unread message in it."""
+    disc = discussion(q, msgs)
+    return not working and not any(m["id"] in disc and m["id"] > seen(n) and for_me(m, n) for n in auto() for m in msgs)
+
+
+def ask_conclusion(q, msgs):
+    """Ask one agent of round q to draft its conclusion (agreed, disputed, next step), addressed so the others then
+    check it. Rotates over the round's served members by round id. Skips rounds with fewer than two answers."""
+    d = os.path.join(INDEP, str(q))
+    answered = [m["from"] for m in msgs if m.get("independent") == q]
+    able = [n for n in members(q) if n in auto() and (asleep(n) or {}).get("why") != "user" and not failure(n)]
+    if len(answered) < 2 or not able:
+        open(os.path.join(d, "conclude"), "w").write("skipped")
+        return None
+    drafter = able[q % len(able)]
+    open(os.path.join(d, "conclude"), "w").write(drafter)   # first: a crash never asks twice
+    return post("user", drafter, f"@{drafter}: the discussion of #{q} has settled. Draft its conclusion for the user; "
+                "the others will check it.", via="agora", mode="conclude", extra={"conclude": q}, re_=[q])
+
+
 TURNS = os.path.join(STATE, "turns.jsonl")  # one line per agent turn: who, which messages, what came of it
 
 
@@ -476,6 +530,11 @@ def _act_rw(name, fn, existing=False):
 def busy(name, on=True, phase="thinking"):
     """Mark an agent as working (phase text) or done (removes everything it was doing)."""
     _act_rw(name, (lambda a: {**a, "phase": phase}) if on else (lambda a: None))
+
+
+def busy_task(name, task):
+    """What a working agent's turn is for (e.g. "checking the conclusion"), shown before its phase or tool."""
+    _act_rw(name, lambda a: {**a, "task": task} if a is not None else a)
 
 
 FG_STALE = 1200   # a foreground action with no "done" after 20 min was interrupted (its post hook never ran)
@@ -646,6 +705,11 @@ def sleep_summary(zz):
 
 def act_text(a):
     """One agent's activity as plain text."""
+    t = _act_plain(a)
+    return a["task"] + ("" if t in ("thinking", "writing") else " · " + t) if a.get("task") else t
+
+
+def _act_plain(a):
     now = time.time()
     items = sorted((x for x in a.get("items", {}).values() if x.get("until", now + 1) > now), key=lambda x: x["since"])
     if not items:

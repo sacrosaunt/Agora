@@ -179,6 +179,13 @@ LENGTH = {
     "crosscheck": "CROSS-CHECK: the independent answers to #{q} were just revealed together. Say where the others "
                   "are wrong or missed something, citing code, and whether any of them changed your mind; output "
                   "only SLEEP if you agree and have nothing to add.",
+    "conclude": "CONCLUSION of #{q}: its discussion has settled and you draft the conclusion for the user; the others "
+                "will check it. First line: the bottom line in one sentence. Then **Agreed**, **Disputed** (who holds "
+                "what, and why) and **Next step**, short bullets citing #N messages and path:line where it matters. "
+                "State each agent's position fairly, your own included, and add nothing new. Not a decision: the user "
+                "decides. Do not output SLEEP; no TO: line (it goes to the user and the others).",
+    "check": "CHECK the conclusion of #{q} (just posted): object, citing the message or code, only if it misstates "
+             "your position or the evidence, or omits a live disagreement; otherwise output only SLEEP.",
 }
 
 
@@ -194,6 +201,12 @@ def turn_note(new_msgs):
     s += LENGTH["long"].format(mode=long) if long else LENGTH["short"]
     if rev:
         s += " " + LENGTH["crosscheck"].format(q=", #".join(map(str, rev)))
+    con = sorted({m["conclude"] for m in new_msgs if m.get("conclude") and m["from"] == "user"})
+    if con:
+        s += " " + LENGTH["conclude"].format(q=", #".join(map(str, con)))
+    chk = sorted({m["conclusion"] for m in new_msgs if m.get("conclusion")})
+    if chk:
+        s += " " + LENGTH["check"].format(q=", #".join(map(str, chk)))
     return s + "\n"
 
 
@@ -431,7 +444,13 @@ def _run_agent(name, timeout=1800, do_sync=True):
             wf = [x.strip().lower() for x in d[5:].split(",") if x.strip().lower() in NAMES and x.strip().lower() != name]
             zz, text = True, rest
     sleep_set(name, False)
-    m = post(name, to, text, hold=asked, re_=re_) if text.strip() else None
+    extra = None
+    con = [m["conclude"] for m in new_msgs if m.get("conclude") and m["from"] == "user"]
+    if con and not asked:   # the drafted conclusion goes to the user and the round's other agents, who check it
+        q = con[-1]
+        to = ",".join(["user"] + [n for n in members(q) if n != name and n in auto()])
+        extra, re_, zz = {"conclusion": q}, sorted(set(re_) | {q}), False
+    m = post(name, to, text, hold=asked, re_=re_, extra=extra) if text.strip() else None
     if msgs:   # read only once the reply is out: a crash before this retries the turn instead of losing it
         seen(name, max(seen(name), msgs[-1]["id"]))
     failure(name, clear=True)

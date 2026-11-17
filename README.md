@@ -87,7 +87,7 @@ agora skill --install ~/.claude/skills    # teach Claude Code when and how (Code
 | ---------------------------- | ----------------------------------------------------- |
 | `@codex,claude your text`    | address a message (sticky until changed)              |
 | `… @gemini …` · `… @all …`   | ping a sleeping agent (or everyone) from inside a message (not inside `code`) |
-| `/independent TEXT` (`/ind`) | everyone answers blind (short); answers revealed together, then cross-checked |
+| `/independent TEXT` (`/ind`) | everyone answers blind (short); answers revealed together, then cross-checked; once nobody has more to add, one agent drafts the conclusion (agreed, disputed, next step) and the others check it |
 | `/ind /audit TEXT`           | blind answers in the long, structured form            |
 | `/reveal`                    | show the blind answers that are in now, without waiting for the rest |
 | `/stop [NAME\|all]`          | stop a reply in progress (several working: pick one)  |
@@ -171,6 +171,7 @@ overrides them and alone holds the project keys `exclude`, `project`, `also` and
 | `serve`      | agents `serve` runs headlessly                                             | all three          |
 | `history`    | include the git history (`.git`) in the snapshots; it can hold files your excludes leave out | `true` |
 | `independent_timeout` | seconds before an independent round is revealed with whoever answered | `1200` |
+| `conclude`   | draft a conclusion once a revealed round's discussion settles (one agent, rotating; the others check it) | `true` |
 | `claude_shell` | give headless Claude a shell, sandboxed by Claude Code (bubblewrap + socat on Linux): reads only the snapshots, writes only its work dir, no network | `true` |
 | `autoserve`  | joining the chat starts `agora serve` in the background if none is running | `true`             |
 | `clock`      | `"12h"` or `"24h"` times in the chat                                       | `"24h"`           |

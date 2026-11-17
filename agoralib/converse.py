@@ -15,15 +15,6 @@ VOTE = re.compile(r"^\W*VOTE:\s*(.+?)\W*$", re.I | re.M)
 SPECIAL = ("abstain", "insufficient evidence")
 
 
-def discussion(q, msgs):
-    """Ids of q and every message answering it, directly or down a reply chain (the `re` links)."""
-    ids = {q["id"]}
-    for m in msgs:
-        if m["id"] > q["id"] and set(m.get("re") or ()) & ids:
-            ids.add(m["id"])
-    return ids
-
-
 def settle(q, timeout, show=print):
     """Stream the messages after question q (a message dict) until it is answered: every served agent expected to
     take it up has had a turn on its discussion (q and the replies to it: posted, had nothing to add, or failed for
@@ -45,6 +36,7 @@ def settle(q, timeout, show=print):
         # an agent's messages stay unread until its reply is posted, so this also covers turns in progress
         live = [n for n in auto() if any(m["id"] in disc and m["id"] > seen(n) and for_me(m, n) for m in msgs)]
         held = [r for r in open_rounds() if r in disc]
+        held += [r for r in revealed_rounds() if r in disc and conclude_pending(r)]   # its conclusion is still to come
         calm = 0 if live or held else calm + 1
         missing = [n for n in expect if n not in done]
         reason, status = None, None

@@ -126,7 +126,7 @@ def serve_loop(a):
             (not over and any(m["id"] > seen(n) and for_me(m, n) for m in msgs))
             or failure(n) or (asleep(n) or {}).get("until") for n in who)
     print(f"serving {who} in parallel (budget {a.budget} agent msgs per user msg); Ctrl-C to stop", flush=True)
-    working, wlock = set(), threading.Lock()
+    working, wlock, calm = set(), threading.Lock(), {}
 
     def turn(name, ids):
         try:
@@ -171,6 +171,19 @@ def serve_loop(a):
             continue
         reveal_due()
         msgs = load()
+        with wlock:
+            idle = not working
+        for q in revealed_rounds():   # a revealed round's discussion that went quiet gets its conclusion drafted
+            if conclude_pending(q) and idle and not os.path.exists(halted) and settled(q, msgs):
+                calm[q] = calm.get(q, 0) + 1
+                if calm[q] >= 2:   # quiet on two passes: a reply about to start isn't missed
+                    c = ask_conclusion(q, msgs)
+                    print(f"{time.strftime('%H:%M:%S')} round #{q} settled; "
+                          + (f"conclusion asked of {c['to'][0]} (#{c['id']})" if c else "too few answers to conclude"),
+                          flush=True)
+                    msgs = load()
+            else:
+                calm.pop(q, None)
         todo = []
         over = agent_streak(msgs) >= a.budget
         if over != os.path.exists(halted):
@@ -204,6 +217,8 @@ def serve_loop(a):
             for name, pend in todo:
                 print(f"{time.strftime('%H:%M:%S')} {name} replying to {[m['id'] for m in pend]}", flush=True)
                 busy(name, True)
+                busy_task(name, "drafting the conclusion" if any(m.get("conclude") for m in pend)
+                          else "checking the conclusion" if any(m.get("conclusion") for m in pend) else None)
                 with wlock:
                     working.add(name)
                 threading.Thread(target=turn, args=(name, [m["id"] for m in pend]), daemon=True).start()
