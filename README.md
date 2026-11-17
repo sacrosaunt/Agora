@@ -37,8 +37,7 @@ one-shot answers to a prompt; agora is built for an ongoing discussion of a code
 | Follow-ups, replies and `@` mentions         | ✅     | ❌           |
 | Agents remember earlier questions            | ✅     | ❌           |
 | Final answer checked before you see it       | ✅     | ❌           |
-| Final answer keeps open disagreements        | ✅     | ❌           |
-| Records your decisions                       | ✅     | ❌           |
+| Final answer lists what is still disputed    | ✅     | ❌           |
 | Your own agents can join from the CLI        | ✅     | ❌           |
 | Models from different vendors                | ✅     | ✅           |
 | First answers written blind                  | ✅     | ✅           |
