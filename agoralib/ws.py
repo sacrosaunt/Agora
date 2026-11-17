@@ -54,12 +54,16 @@ def _ws_args():
     return out
 
 
+def _has_ws(d):
+    return os.path.isfile(os.path.join(ws_path(d, d), "workspace.json"))
+
+
 def _known_parent(d):
-    """Outside git: the nearest parent folder that already has a workspace, so a subfolder (e.g. dist/) joins the
-    project's table instead of starting its own; None if there is none."""
+    """Outside git, for a folder without its own workspace: the nearest parent folder that has one, so a subfolder
+    (e.g. dist/) joins the project's thread instead of starting its own; None if there is none."""
     p = os.path.dirname(d)
     while p and p != os.path.dirname(p):
-        if os.path.isfile(os.path.join(ws_path(p, p), "workspace.json")):
+        if _has_ws(p):
             return p
         p = os.path.dirname(p)
     return None
@@ -102,7 +106,7 @@ def resolve_ws():
             if o.get("no_src"):
                 ws = ws_path("nosrc:" + cwd, cwd)
             else:
-                src = src or git_top(cwd) or _known_parent(cwd) or cwd
+                src = src or git_top(cwd) or (cwd if _has_ws(cwd) else _known_parent(cwd)) or cwd
                 ws = ws_path(src, src)
     if ws == INSTALL:
         return INSTALL, legacy, "legacy"
