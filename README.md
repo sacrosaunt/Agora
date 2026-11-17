@@ -21,6 +21,28 @@ of echoing them.
 - **Your logins.** Each CLI runs on its own local login; no API keys.
 - **Usable by your agents.** Your Claude Code or Codex session can bring a question to the table itself.
 
+### How it compares to LLM Council
+
+[LLM Council](https://github.com/karpathy/llm-council) also puts several models on one question. It is built for
+one-shot answers to a prompt; agora is built for an ongoing discussion of a codebase.
+
+|                                              | agora | LLM Council |
+| -------------------------------------------- | :---: | :---------: |
+| Reads your repo and its git history          | ✅     | ❌           |
+| Agents with tools, not bare chat completions | ✅     | ❌           |
+| Claims about code cited as `path:line`       | ✅     | ❌           |
+| Agents check each other's claims in the code | ✅     | ❌           |
+| No API key or per-token billing              | ✅     | ❌           |
+| Web search                                   | ✅     | ❌           |
+| Follow-ups, replies and `@` mentions         | ✅     | ❌           |
+| Agents remember earlier questions            | ✅     | ❌           |
+| Final answer checked before you see it       | ✅     | ❌           |
+| Final answer keeps open disagreements        | ✅     | ❌           |
+| Records your decisions                       | ✅     | ❌           |
+| Your own agents can join from the CLI        | ✅     | ❌           |
+| Models from different vendors                | ✅     | ✅           |
+| First answers written blind                  | ✅     | ✅           |
+
 ## Quick start
 
 **1. Get it**
@@ -87,7 +109,7 @@ agora skill --install ~/.claude/skills    # teach Claude Code when and how (Code
 | ---------------------------- | ----------------------------------------------------- |
 | `@codex,claude your text`    | address a message (sticky until changed)              |
 | `… @gemini …` · `… @all …`   | ping a sleeping agent (or everyone) from inside a message (not inside `code`) |
-| `/independent TEXT` (`/ind`) | everyone answers blind (short); answers revealed together, then cross-checked; once nobody has more to add, one agent drafts the conclusion (agreed, disputed, next step) and the others check it |
+| `/independent TEXT` (`/ind`) | everyone answers blind (short); answers revealed together, then cross-checked; once nobody has more to add, one agent drafts the conclusion (agreed, disputed, next step), the others check the draft out of sight, and only the final conclusion is shown |
 | `/ind /audit TEXT`           | blind answers in the long, structured form            |
 | `/reveal`                    | show the blind answers that are in now, without waiting for the rest |
 | `/stop [NAME]`               | stop every turn, running or queued, waking nobody (`NAME`: only its reply; whoever waits on it goes on) |
@@ -115,8 +137,11 @@ Each repo or folder you run `agora` in gets its own table: thread, state and sna
   `*.pem`, `id_rsa*`, …), plus the git history. `agora sync` refreshes it; the agents refresh it before each turn.
 - **No repo?** In a plain folder agora uses the folder's `.gitignore`. `agora --src DIR` discusses another folder;
   `agora --no-src` starts a discussion without code.
-- **`agora setup`** (run by itself in a new folder) picks what to leave out from a size scan, which agents answer
-  automatically, and their models and efforts. It also offers to install `rich` for markdown in the chat.
+- **`agora setup`** is a short review: a checklist of folders to leave out (suggestions ticked, with the
+  snapshot's running size against the limits), which agents answer automatically, and web search. Models and
+  efforts stay on each CLI's default unless you pick them (`agora setup --models`). Settings are saved for the
+  workspace; say yes to "make these the defaults" to use them for new workspaces too. A new folder skips setup
+  when you have defaults and the source fits as it is.
 - **Project notes** for the agents go in `PROJECT.md` in the workspace (see `PROJECT.example.md`).
 - **Limits.** Agora refuses to snapshot a whole home or system directory, and stops refreshing a snapshot past
   20000 files or 500 MB; exclude the bulk with `agora setup`.
@@ -137,7 +162,7 @@ agora post --via AGENT …              an agent posts as you and follows the di
 agora decide [--via AGENT] TEXT       record a decision (`agora decisions` lists them)
 agora skill [--install DIR]           the agent skill for `post --via`
 agora sync                            refresh the code snapshot
-agora setup                           excludes, seated agents, models and efforts
+agora setup [--models]                excludes, seated agents, web search (--models: models and efforts)
 agora where · agora ls                this folder's workspace · all workspaces
 agora move FROM [TO]                  move a workspace to its project's new folder (TO: default here)
 agora serve [--only X]                run the agents whenever they're addressed (one per workspace;
@@ -165,14 +190,14 @@ overrides them and alone holds the project keys `exclude`, `project`, `also` and
 
 | Key          | Meaning                                                                    | Default            |
 | ------------ | -------------------------------------------------------------------------- | ------------------ |
-| `exclude`    | kept out of the snapshot: path prefixes (`data/`, `runs/`) or globs (`*.log`) | `[]`            |
+| `exclude`    | kept out of the snapshot: rooted paths matched by whole names (`data/`, `src/assets/`) or globs (`*.log`, `**/build/` at any depth) | `[]` |
 | `project`    | project notes appended to the protocol                                     | `PROJECT.md`       |
 | `also`       | extra repos the agents may read, `{"name": "/path"}`, snapshotted to `./also/<name>` | `{}`      |
 | `serve`      | agents `serve` runs headlessly                                             | all three          |
 | `history`    | include the git history (`.git`) in the snapshots; it can hold files your excludes leave out | `true` |
 | `independent_timeout` | seconds before an independent round is revealed with whoever answered | `1200` |
-| `conclude`   | draft a conclusion once a revealed round's discussion settles (one agent, rotating; the others check it) | `true` |
-| `web_search` | let the agents search the web (Codex live search, Claude WebSearch/WebFetch, Gemini's built-in search; off: told not to); `agora setup` asks | `true` |
+| `conclude`   | draft a conclusion once a revealed round's discussion settles (one agent, rotating; the others check the draft privately; you see the final one) | `true` |
+| `web_search` | let the agents search the web (Codex live search, Claude WebSearch/WebFetch, Gemini's built-in search; off: told not to); `agora setup` asks | `false` |
 | `claude_shell` | give headless Claude a shell, sandboxed by Claude Code (bubblewrap + socat on Linux): reads only the snapshots, writes only its work dir, no network | `true` |
 | `autoserve`  | joining the chat starts `agora serve` in the background if none is running | `true`             |
 | `clock`      | `"12h"` or `"24h"` times in the chat                                       | `"24h"`           |
