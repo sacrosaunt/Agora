@@ -243,6 +243,18 @@ def chat(to="all", after=None):
     SLASH = ("help", "independent", "ind", "audit", "design", "decide", "decisions", "sleep", "wake", "to", "last", "all",
              "status", "clock", "add", "remove", "kick", "quit", "q", "exit")   # the commands the input loop below accepts
 
+    def recips(s):
+        """'codex,@claude' (spaces or commas) as a recipient list 'codex,claude'; '' for none; False after
+        reporting an unknown name."""
+        names = [t.lstrip("@").lower() for t in re.split(r"[\s,]+", s.strip()) if t.strip("@ ")]
+        bad = [n for n in names if n not in NAMES + ("all",)]
+        if bad:
+            near = difflib.get_close_matches(bad[0], NAMES + ("all",), 1, 0.5)
+            emit(col("31", f"no one called {bad[0]!r}" + (f" (did you mean {near[0]}?)" if near else "")
+                     + f"; recipients: {', '.join(NAMES + ('all',))}. Nothing was posted."))
+            return False
+        return ",".join(names)
+
     def hl_input(buf):
         """The typed line with pings coloured, including every name in a leading @a,b recipient list, and a leading
         valid /command in bold."""
@@ -361,7 +373,7 @@ def chat(to="all", after=None):
             state["members"] = round_members()
             notes = []
             for q in open_rounds():
-                notes.append(f"◆ #{q} independent: {len(round_status(q))}/{len(round_members())} in")
+                notes.append(f"◆ #{q} independent: {len(round_status(q))}/{len(members(q))} in")
             if os.path.exists(os.path.join(STATE, "halted")):
                 notes.append("⏸ budget reached: agents wait for you")
             state["notes"] = notes
@@ -514,8 +526,10 @@ def chat(to="all", after=None):
                 except ValueError:
                     emit(col("31", f"bad duration {rest[1]!r}; e.g. 30m, 2h"))
             continue
-        if line.startswith("/to"):
-            state["to"] = line[3:].strip() or "all"
+        if re.match(r"/to(\s|$)", line):
+            tgt = recips(line[3:])
+            if tgt is not False:
+                state["to"] = tgt or "all"
             continue
         if line == "/clock":
             CLOCK["12h"] = not CLOCK["12h"]
@@ -540,9 +554,11 @@ def chat(to="all", after=None):
             if not line:
                 emit(col("31", f"usage: /{mm.group(1)} TEXT"))
                 continue
-        if line.startswith("@"):
-            tgt, _, rest = line[1:].partition(" ")
-            tgt = ",".join(t.lstrip("@") for t in tgt.split(","))   # @codex,@claude works like @codex,claude
+        if re.match(r"@\s*[A-Za-z]", line):
+            tgt, _, rest = line[1:].lstrip().partition(" ")   # "@ codex hi" works like "@codex hi"
+            tgt = recips(tgt)
+            if tgt is False:   # a typo: nothing posted, and the recipients stay what they were
+                continue
             state["to"] = tgt
             if tgt.lower() != "all":   # a leading @all stays in the text: it asks everyone (no lead turn)
                 line = rest.strip()

@@ -178,8 +178,8 @@ def serve_loop(a):
 
 def seat(names, add, by="user"):
     """`agora add` / `agora remove`: put names into this workspace's served agents, or take them out (saved in the
-    workspace's agora.json). An added agent starts from the next message (its fresh session still reads the
-    thread); a removed one finishes a turn it is in, then answers no more. Logged so every open chat shows it.
+    workspace's agora.json). An added agent answers from your latest message if nobody has answered it yet, else
+    from the next one (its fresh session still reads the thread); a removed one finishes a turn it is in, then answers no more. Logged so every open chat shows it.
     Returns the names that changed."""
     cur = list(auto())
     changed = [n for n in AGENTS if n in names and (n in cur) != add]
@@ -189,8 +189,19 @@ def seat(names, add, by="user"):
     msgs = load()
     for n in changed:
         if add and msgs:
-            seen(n, max(seen(n), msgs[-1]["id"]))   # not the backlog: what came before is context, not questions
-        elif not add:   # out of the roll call now, not when its last read ages out (an agent run by hand that
+            # not the backlog (context, not questions), but a question you just asked and nobody answered yet
+            start = msgs[-1]["id"] - (1 if msgs[-1]["from"] == "user" else 0)
+            seen(n, max(seen(n), start))
+        elif not add:
+            for q in open_rounds():   # an open independent round stops waiting for it
+                mem = members(q)
+                if n in mem:
+                    wjson(os.path.join(INDEP, str(q), "members.json"), [x for x in mem if x != n])
+            for o in AGENTS:   # whoever waits on its answer stops waiting
+                if n in ((asleep(o) or {}).get("from") or ()) and (asleep(o) or {}).get("why") != "user":
+                    sleep_set(o, False)
+            sleep_set(n, False)
+        if not add:   # out of the roll call now, not when its last read ages out (an agent run by hand that
             p = os.path.join(STATE, n + ".seen")   # reads again is back in by itself)
             if os.path.exists(p):
                 t = time.time() - 7300

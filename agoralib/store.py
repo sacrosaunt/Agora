@@ -188,11 +188,19 @@ def take_turns(mid):
         i = int(open(p).read())
     except (OSError, ValueError):
         i = -1
-    lead = AGENTS[(i + 1) % len(AGENTS)]
+    # the lead comes from who will actually answer: in this chat, not put to sleep by you, not failing (an absent
+    # lead would leave the rest asleep for the full 15 minutes)
+    here = [n for n in round_members() if (asleep(n) or {}).get("why") != "user"]
+    able = [n for n in here if not failure(n)] or here
+    if not able:
+        return
+    lead = next(AGENTS[(i + k) % len(AGENTS)] for k in range(1, len(AGENTS) + 1) if AGENTS[(i + k) % len(AGENTS)] in able)
     with open(p, "w") as f:
         f.write(str(AGENTS.index(lead)))
-    for n in AGENTS:
-        if n != lead and not (asleep(n) or {}).get("why") == "user":
+    if (asleep(lead) or {}).get("why") in ("turn", "auto"):
+        sleep_set(lead, False)   # it may still wait on an earlier lead that waits on it: two quick posts deadlocked
+    for n in here:
+        if n != lead:
             sleep_set(n, True, 900, why="turn", until_from=[lead])   # wakes on the lead's answer, a ping, or after 15 min
 
 
