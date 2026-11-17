@@ -128,7 +128,9 @@ def choose(title, options, col=None, ticked=(), empty_ok=False, status=None):
             if len(options) > height:
                 rows.append(col("2", f"  ({top + 1}-{min(len(options), top + height)} of {len(options)})"))
             width = shutil.get_terminal_size((80, 24)).columns - 1
-            rows = [clip(r, width) for r in rows]   # a wrapped row would throw off the redraw and push the list down
+            # one screen line per row: a wrapped row or a "\n" inside one (e.g. a title opening with a blank line)
+            # would throw off the redraw and push the list down a line per key
+            rows = [clip(x, width) for r in rows for x in r.split("\n")]
             sys.stdout.write((f"\033[{drawn}A" if drawn else "") + "".join("\r\033[K" + r + "\n" for r in rows)
                              + ("\033[J" if drawn > len(rows) else ""))
             sys.stdout.flush()
