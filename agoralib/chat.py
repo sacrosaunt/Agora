@@ -115,7 +115,7 @@ def choose(title, options, col=None, ticked=(), empty_ok=False, status=None):
     try:
         sys.stdout.write("\033[?25l")   # no cursor while picking
         while True:
-            height = max(3, shutil.get_terminal_size((80, 24)).lines - 4 - (1 if status else 0))
+            height = max(3, (shutil.get_terminal_size((80, 24)).lines or 24) - 4 - (1 if status else 0))
             top = min(max(top, cur - height + 1), cur, max(0, len(options) - height))
             rows = [col("1", title) + col("2", "   ↑↓ move · Space tick · Enter confirm · Esc cancel")]
             if status:
@@ -127,7 +127,7 @@ def choose(title, options, col=None, ticked=(), empty_ok=False, status=None):
                 rows.append((col("1", line) if i == cur else line) + col("2", note))
             if len(options) > height:
                 rows.append(col("2", f"  ({top + 1}-{min(len(options), top + height)} of {len(options)})"))
-            width = shutil.get_terminal_size((80, 24)).columns - 1
+            width = (shutil.get_terminal_size((80, 24)).columns or 80) - 1   # a pty can report 0 x 0
             # one screen line per row: a wrapped row or a "\n" inside one (e.g. a title opening with a blank line)
             # would throw off the redraw and push the list down a line per key
             rows = [clip(x, width) for r in rows for x in r.split("\n")]
