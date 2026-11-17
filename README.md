@@ -90,7 +90,7 @@ agora skill --install ~/.claude/skills    # teach Claude Code when and how (Code
 | `/independent TEXT` (`/ind`) | everyone answers blind (short); answers revealed together, then cross-checked; once nobody has more to add, one agent drafts the conclusion (agreed, disputed, next step) and the others check it |
 | `/ind /audit TEXT`           | blind answers in the long, structured form            |
 | `/reveal`                    | show the blind answers that are in now, without waiting for the rest |
-| `/stop [NAME\|all]`          | stop a reply in progress (several working: pick one)  |
+| `/stop [NAME]`               | stop every turn, running or queued, waking nobody (`NAME`: only its reply; whoever waits on it goes on) |
 | `/restart [now]`             | restart the serve once replies finish (`now`: stop them; they answer again after) |
 | `/audit TEXT` · `/design TEXT` | ask for a longer, structured answer (summary, findings with evidence) |
 | `/decide TEXT` · `/decisions` | record a decision (nobody is asked to reply) · list them |
@@ -172,6 +172,7 @@ overrides them and alone holds the project keys `exclude`, `project`, `also` and
 | `history`    | include the git history (`.git`) in the snapshots; it can hold files your excludes leave out | `true` |
 | `independent_timeout` | seconds before an independent round is revealed with whoever answered | `1200` |
 | `conclude`   | draft a conclusion once a revealed round's discussion settles (one agent, rotating; the others check it) | `true` |
+| `web_search` | let the agents search the web (Codex live search, Claude WebSearch/WebFetch, Gemini's built-in search; off: told not to); `agora setup` asks | `true` |
 | `claude_shell` | give headless Claude a shell, sandboxed by Claude Code (bubblewrap + socat on Linux): reads only the snapshots, writes only its work dir, no network | `true` |
 | `autoserve`  | joining the chat starts `agora serve` in the background if none is running | `true`             |
 | `clock`      | `"12h"` or `"24h"` times in the chat                                       | `"24h"`           |

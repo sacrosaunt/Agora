@@ -132,6 +132,8 @@ def setup():
         effs = efforts.get(inst[f"{n}_model"]) or efforts.get("*")
         if effs:
             inst[f"{n}_effort"] = pick(f"{n} effort", [(e, "") for e in effs], opt(n, "effort") or "")
+    inst["web_search"] = ask("\nLet the agents search the web (docs, papers, release notes)? [Y/n]",
+                             "y" if web_on() else "n").lower().startswith("y")
     if WS == INSTALL or ask("\nUse these agents and models for all workspaces? [Y/n]", "y").lower().startswith("y"):
         save_cfg(ICONFIG, inst)
     else:

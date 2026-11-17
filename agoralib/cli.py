@@ -198,7 +198,7 @@ def main():
     for c, h in (("add", "bring agents into this chat (served from the next message on)"),
                  ("remove", "take agents out of this chat")):
         p = sp.add_parser(c, help=h); p.add_argument("names", nargs="+", metavar="NAME")
-    p = sp.add_parser("stop", help="stop agents' replies in progress (killed with every tool they started)")
+    p = sp.add_parser("stop", help="stop every turn, running or queued (NAME: only its reply)")
     p.add_argument("names", nargs="*", metavar="NAME", help="default: every agent working now; all: the same, "
                    "and nobody waiting on them is woken")
     p = sp.add_parser("restart", help="restart the serve on the code now on disk (after the replies in progress)")
@@ -386,10 +386,12 @@ def main():
         bad = [n for n in names if n not in AGENTS + ("all",)]
         if bad:
             sys.exit(f"agora: no agent {bad[0]!r}; agents: {', '.join(AGENTS)} (or all)")
-        work = [n for n in AGENTS if running(n)]
-        pick = work if not names or "all" in names else names
-        done = [n for n in pick if stop_turn(n, "quiet" if "all" in names else "drop")]
-        print(f"stopped {', '.join(done)}" if done else "nobody " + ("of " + ", ".join(pick) + " " if names and "all" not in names else "") + "is working on a reply")
+        if not names or "all" in names:   # everything: running and queued turns, nobody woken
+            done = stop_all()
+            print(f"stopped {', '.join(done)}; nothing queued" if done else "nobody was working; queued turns cleared")
+        else:
+            done = [n for n in names if stop_turn(n, "drop")]
+            print(f"stopped {', '.join(done)}" if done else "nobody of " + ", ".join(names) + " is working on a reply")
     elif a.cmd == "restart":
         was = serve_running()
         wait = restart_serve(now=a.now)

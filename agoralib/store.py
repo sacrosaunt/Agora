@@ -475,6 +475,27 @@ def stop_turn(name, how="drop"):
     return False
 
 
+def stop_all():
+    """/stop: end every turn, running or queued. Unread messages count as read for every agent (so nothing starts
+    after the kill), open independent rounds stop waiting, pending conclusions are not asked for, nobody is
+    woken. Returns the agents whose reply was running."""
+    msgs = load()
+    last = msgs[-1]["id"] if msgs else 0
+    for n in AGENTS:   # first, so the serve can't start a turn between the kill and the bookkeeping
+        if any(m["id"] > seen(n) and for_me(m, n) for m in msgs):
+            seen(n, max(seen(n), last))
+    for q in open_rounds():
+        st = round_status(q)
+        for n in members(q):
+            if n not in st:
+                hold_outcome(q, n, stopped=True)
+    for q in revealed_rounds():
+        if conclude_pending(q):
+            with open(os.path.join(INDEP, str(q), "conclude"), "w") as f:
+                f.write("stopped")
+    return [n for n in AGENTS if stop_turn(n, "quiet")]
+
+
 def stopped(name):
     """How name's last CLI run was stopped (see stop_turn), else None; clears the mark."""
     p = os.path.join(RUN, name + ".stop")

@@ -46,7 +46,7 @@ Commands
 /to NAME                  set the recipients
 /audit TEXT, /design TEXT ask for a longer structured answer
 /decide TEXT              record a decision; /decisions lists them
-/stop [NAME|all]          stop a reply in progress (no name: the one working, or pick one)
+/stop [NAME]              stop every turn, running or queued (NAME: only its reply; whoever waits on it goes on)
 /restart [now]            restart the serve on the code now on disk (e.g. after git pull); it waits for the
                           replies in progress, or with now stops them and they are answered again
 /sleep NAME [30m] [until NAME], /wake NAME
@@ -299,11 +299,14 @@ def chat(to="all", after=None):
         if not re.match(r"@\s*[A-Za-z]", line):
             return line
         tgt, _, rest = line[1:].lstrip().partition(" ")   # "@ codex hi" works like "@codex hi"
+        tgt, punct = re.match(r"(.*?)([?!.:;]*)$", tgt).groups()   # "@codex: hi", "@codex?"
         tgt = recips(tgt)
         if tgt is False:   # a typo: nothing posted, and the recipients stay what they were
             return None
         state["to"] = tgt
         rest = rest.strip()
+        if punct.strip(":;"):   # "@codex? are you there": a question to them, posted as typed
+            return line
         if not rest:
             return None
         return rest if tgt.lower() != "all" or rest.startswith("/") else line
@@ -376,10 +379,27 @@ def chat(to="all", after=None):
             return f"\033[1;{c}m{g.group(0)}\033[22;39m"
         return re.sub(r"(?<![\w@])@(" + "|".join(only or NAMES + ("all",)) + r")\b", hl, out, flags=re.I)
 
+    def cites(out):
+        """Inline #N references to messages in the thread: bold and underlined in the cited author's colour."""
+        if not tty or "#" not in out:
+            return out
+        au = state.setdefault("authors", {})
+        def hl(g):
+            q = int(g.group(2))
+            if q not in au and q > max(au, default=0):   # newer than any message seen: re-read the thread once
+                au.update({x["id"]: x["from"] for x in load()})
+            if q not in au:
+                return g.group(0)
+            c = COLORS.get(au[q], "37").removeprefix("1;")
+            return f"{g.group(1)}\033[1;4;{c}m#{q}\033[22;24;39m"
+        # preceded by a start, a non-word character or a colour code (rich styles text right before it)
+        return re.sub(r"(^|\x1b\[[0-9;]*m|[^\w#&/])#(\d{1,6})(?!\w)", hl, out, flags=re.M)
+
     def render(m):
+        state.setdefault("authors", {})[m["id"]] = m["from"]
         head = (col(COLORS.get(m["from"], "0"), f"── #{m['id']} {author(m)}") + col("2", f" → {', '.join(m['to'])}")
                 + col("35", tag(m)) + col("2", f" · {hhmm(m['ts'])}"))
-        return head + "\n" + pings(md(m["text"]), [n for n in NAMES + ("all",) if mentioned(m["text"], n)])
+        return head + "\n" + cites(pings(md(m["text"]), [n for n in NAMES + ("all",) if mentioned(m["text"], n)]))
 
     def show(m):
         state["hist"].append(m)
@@ -610,22 +630,16 @@ def chat(to="all", after=None):
                 emit(col("31", f"no agent {bad[0]!r}" + (f" (did you mean {near[0]}?)" if near else "")
                          + "; usage: /stop [NAME|all]"))
                 continue
+            if not arg or "all" in arg:   # everything stops: running and queued turns, nobody is woken
+                done = stop_all()
+                emit(col("33", f"■ stopped {', '.join(done)}; nothing queued" if done else
+                         "■ nobody was working; queued turns cleared"))
+                continue
             if not work:
                 emit(col("2", "nobody is working on a reply"))
                 continue
-            how = "quiet" if "all" in arg else "drop"   # all: silence; one: whoever waits on it gets the turn
-            names = work if "all" in arg else arg
-            if not names and len(work) == 1:
-                names = work
-            elif not names:
-                if not tty:
-                    emit(col("31", f"usage: /stop NAME|all; working: {', '.join(work)}"))
-                    continue
-                with lock:
-                    names = choose("Stop whose reply:", [(n, act_text(state["busy"][n]) if n in state["busy"] else "")
-                                                        for n in work], col)
-                if not names:
-                    continue
+            names = arg   # one agent: whoever waits on it gets the turn
+            how = "drop"
             for n in names:
                 if n not in work or not stop_turn(n, how):
                     emit(col("2", f"{n} isn't working on a reply"))
