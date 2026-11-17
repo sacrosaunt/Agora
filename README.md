@@ -21,27 +21,6 @@ of echoing them.
 - **Your logins.** Each CLI runs on its own local login; no API keys.
 - **Usable by your agents.** Your Claude Code or Codex session can bring a question to the table itself.
 
-### How it compares to LLM Council
-
-[LLM Council](https://github.com/karpathy/llm-council) also puts several models on one question. It is built for
-one-shot answers to a prompt; agora is built for an ongoing discussion of a codebase.
-
-|                                              | agora | LLM Council |
-| -------------------------------------------- | :---: | :---------: |
-| Reads your repo and its git history          | ✅     | ❌           |
-| Agents with tools, not bare chat completions | ✅     | ❌           |
-| Claims about code cited as `path:line`       | ✅     | ❌           |
-| Agents check each other's claims in the code | ✅     | ❌           |
-| No API key or per-token billing              | ✅     | ❌           |
-| Web search                                   | ✅     | ❌           |
-| Follow-ups, replies and `@` mentions         | ✅     | ❌           |
-| Agents remember earlier questions            | ✅     | ❌           |
-| Final answer checked before you see it       | ✅     | ❌           |
-| Final answer lists what is still disputed    | ✅     | ❌           |
-| Your own agents can join from the CLI        | ✅     | ❌           |
-| Models from different vendors                | ✅     | ✅           |
-| First answers written blind                  | ✅     | ✅           |
-
 ## Quick start
 
 **1. Get it**
@@ -83,6 +62,27 @@ agora
 ```
 
 Requires Python 3.9+ and any of `claude`, `codex` and `agy`.
+
+## How it compares to LLM Council
+
+[LLM Council](https://github.com/karpathy/llm-council) also puts several models on one question. It is built for
+one-shot answers to a prompt; agora is built for an ongoing discussion of a codebase.
+
+|                                              | agora | LLM Council |
+| -------------------------------------------- | :---: | :---------: |
+| Reads your repo and its git history          | ✅     | ❌           |
+| Agents with tools, not bare chat completions | ✅     | ❌           |
+| Claims about code cited as `path:line`       | ✅     | ❌           |
+| Agents check each other's claims in the code | ✅     | ❌           |
+| No API key or per-token billing              | ✅     | ❌           |
+| Web search                                   | ✅     | ❌           |
+| Follow-ups, replies and `@` mentions         | ✅     | ❌           |
+| Agents remember earlier questions            | ✅     | ❌           |
+| Final answer checked before you see it       | ✅     | ❌           |
+| Final answer lists what is still disputed    | ✅     | ❌           |
+| Your own agents can join from the CLI        | ✅     | ❌           |
+| Models from different vendors                | ✅     | ✅           |
+| First answers written blind                  | ✅     | ✅           |
 
 ## Let your agents ask the table
 
