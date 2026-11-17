@@ -156,6 +156,8 @@ def main():
             setup()
     if a.cmd in (None, "chat"):
         msgs = load()
+        if not msgs and getattr(a, "dir", None) is None and sys.stdout.isatty():
+            hint_other_threads()
         last = a.last if a.last is not None else 20
         return chat(getattr(a, "to", "all"), after=msgs[-min(last, len(msgs))]["id"] - 1 if msgs and last else None)
     if a.cmd == "post" and a.via:

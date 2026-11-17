@@ -32,6 +32,24 @@ def list_ws():
         print(f"{'*' if d == WS else ' '} {os.path.basename(d):40s} {n:5d} msgs  last {when}  {src or '(no source)'}")
 
 
+def hint_other_threads(hours=24):
+    """This folder's thread is empty: point at threads active lately, since an agent working on this project from
+    another folder (a sibling copy, a differently named checkout) talks there, not here."""
+    if not os.path.isdir(DATA):
+        return
+    rows = []
+    for d in os.listdir(DATA):
+        w, t = os.path.join(DATA, d), os.path.join(DATA, d, "thread.jsonl")
+        if w != WS and os.path.isfile(os.path.join(w, "workspace.json")) and os.path.exists(t) \
+                and time.time() - os.path.getmtime(t) < hours * 3600:
+            rows.append((os.path.getmtime(t), w, _json(os.path.join(w, "workspace.json")).get("src")))
+    if not rows:
+        return
+    print(f"This folder's thread ({SRC or WS}) is empty. Active in the last {hours} h:")
+    for mt, w, src in sorted(rows, reverse=True)[:5]:
+        print(f"  {hhmm(mt, False)}  {src or w}\n           open it: run agora in that folder, or agora --dir {w}")
+
+
 def ask(q, default=""):
     try:
         r = input(f"{q} " + (f"[{default}] " if default and not q.endswith("]") else "")).strip()

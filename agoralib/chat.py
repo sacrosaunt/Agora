@@ -324,7 +324,7 @@ def chat(to="all", after=None):
             break
         with lock:
             state["reading"] = False   # until the next input() draws its own prompt
-        cols = shutil.get_terminal_size().columns
+        cols = max(1, shutil.get_terminal_size().columns)   # 0 in a pty with no size
         vis = vwidth(plain_prompt()) + vwidth(line)
         echo_rows = max(1, -(-vis // cols))   # rows your typed line takes = rows from its first row to the cursor
         with lock:  # Enter left the status line above your line: clear both, redraw your line in its place
