@@ -289,25 +289,22 @@ def setup(models=False):
             st.record("each CLI's default" if not any(opt(n, "model") for n in inst["serve"]) else "unchanged")
         st.show("Web access")
         now = "3" if web_shell() else "2" if web_on() else "1"
-        print("What may the agents reach on the web?\n"
-              "  1. nothing: they work from the code and the thread\n"
-              "  2. search: the agents' own web search and page fetch tools (queries go to their web services)\n"
-              "  3. search, and a shell with network for Codex: it can fetch URLs and test the running app on\n"
-              "     localhost. Anything it can read (code, thread) could then leave the machine, and a page it\n"
-              "     fetches could try to talk it into that. (Claude's and Gemini's shells stay offline.)\n")
-        r = ask(f"1, 2 or 3? [{now}]", now).strip()
+        print("What can the agents reach online?\n\n"
+              "  1  Nothing     code and thread only\n"
+              "  2  Search      their built-in web search\n"
+              "  3  + Network   Codex can also open URLs and your running app.\n"
+              "                 Risk: a bad page could trick it into sending out your code.\n")
+        r = ask(f"Choose 1-3 [{now}]", now).strip()
         r = r if r in ("1", "2", "3") else now
         inst["web_search"], inst["web_shell"] = r != "1", r == "3"
-        st.record({"1": "off", "2": "search", "3": "search + Codex shell network"}[r])
+        st.record({"1": "nothing", "2": "search", "3": "search + Codex network"}[r])
         st.show("Browser")
         b = find_browser()
         if b:
             on = _on(CFG.get("browser", "auto"))
-            print(f"Found a headless browser: {b}\nWith it the agents can render a page (the DOM after its scripts, or a "
-                  "screenshot) instead of guessing from the code. Claude and Gemini render local files; Codex local files"
-                  " and servers on localhost, only with option 3"
-                  " above.\n")
-            inst["browser"] = "auto" if ask(f"Let the agents use it? [{'Y/n' if on else 'y/N'}]",
+            print(f"Let the agents open pages in a headless browser to see what they really show?\n"
+                  f"  found: {b}\n  (Codex needs option 3 above; the others open local files only.)\n")
+            inst["browser"] = "auto" if ask(f"[{'Y/n' if on else 'y/N'}]",
                                             "y" if on else "n").lower().startswith("y") else "off"
             st.record("on" if inst["browser"] == "auto" else "off")
         else:
