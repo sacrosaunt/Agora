@@ -140,7 +140,8 @@ def converse(via, to, text, options=None, rounds=1, timeout=1800.0, mode=None):
     body = text.strip() + ("\n\n" + vote if vote else "")
 
     def follow(q):
-        print(f"posted #{q['id']} as user via {via}; following the discussion…", file=sys.stderr, flush=True)
+        print(f"posted #{q['id']} as user via {via}; following the discussion…"
+              + (f" (watch it live: run `agora` in {SRC})" if SRC else ""), file=sys.stderr, flush=True)
         new, outcomes, reason, status = settle(q, timeout)
         print(f"\nSETTLED: {reason}")
         for n, o in sorted(outcomes.items()):
