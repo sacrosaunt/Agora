@@ -70,6 +70,61 @@ def pick(title, options, current):
     return r or current
 
 
+class Steps:
+    """Setup's progress: in a terminal each step gets a fresh screen (the alternate one, so your scrollback
+    stays as it was) under a progress bar and the answers so far; otherwise a [i/n] line per step."""
+    def __init__(self, title, names):
+        self.title, self.names, self.done, self.cur = title, list(names), [], None
+        self.tty = sys.stdin.isatty() and sys.stdout.isatty() and ansi_terminal()
+
+    def __enter__(self):
+        if self.tty:
+            sys.stdout.write("\033[?1049h")
+        else:
+            print(self.title)
+        return self
+
+    def __exit__(self, *exc):
+        if self.tty:   # back to the normal screen (on Ctrl-C too), with what was settled
+            sys.stdout.write("\033[?1049l\033[?25h")
+            sys.stdout.flush()
+            print(self.title)
+            done = [d for d in self.done if d[0] == "Snapshot"] if exc[0] else self.done   # only excludes save early
+            for label, value in done:
+                print(f"  \033[32m✓\033[0m {label:11s} {value}")
+        if exc[0]:
+            print("Setup cancelled" + (": the rest is unchanged." if any(d[0] == "Snapshot" for d in self.done)
+                                       else ", nothing changed."))
+
+    def show(self, name):
+        """Start (or redraw) step name."""
+        if name not in self.names:
+            self.names.append(name)
+        self.cur = name
+        i, n = self.names.index(name) + 1, len(self.names)
+        if not self.tty:
+            print(f"\n[{i}/{n}] {name}")
+            return
+        w = 24
+        fill = round(w * (i - 1) / n)
+        sys.stdout.write("\033[H\033[2J")
+        print(f"\033[1m{self.title}\033[0m")
+        print(f"\033[36m{'━' * fill}\033[2m{'─' * (w - fill)}\033[0m {i}/{n}  \033[1m{name}\033[0m")
+        for label, value in self.done:
+            print(f"  \033[32m✓\033[0m {label:11s} \033[2m{value}\033[0m")
+        print()
+
+    def record(self, value):
+        """The current step's answer."""
+        self.done = [d for d in self.done if d[0] != self.cur] + [(self.cur, value)]
+        if not self.tty:
+            print(f"{self.cur}: {value}")
+
+    def skip(self, name):
+        if name in self.names:
+            self.names.remove(name)
+
+
 UTF8 = {"encoding": "utf-8", "errors": "replace"}   # Windows would decode as cp1252 and drop the output
 
 
@@ -189,57 +244,83 @@ def setup(models=False):
     """Interactive review: what to leave out of the snapshot, which agents answer, web search; models and efforts
     only when asked for (models=True, or yes to Customize). Settings go to this workspace, and to the install's
     defaults for new workspaces when you say so."""
-    print(f"Setting up agora for {SRC or 'a discussion without code'}")
-    if SRC:   # 1. excludes
-        ex = pick_excludes(SRC)
-        if ex is not None:
-            save_cfg(CONFIG, {"exclude": ex})
-            print(f"Excluded: {', '.join(ex) or 'nothing'}")
     found = [n for n in AGENTS if shutil.which({"claude": CLAUDE, "codex": "codex", "gemini": AGY}[n])]
-    if not found:
-        print("\nNo agent CLI found (claude, codex, agy): install one, then run `agora setup` again.")
-    cur = [n for n in auto() if n in found] or found
-    seat = choose("\nAgents that answer automatically:", [(n, "") for n in found], ticked=cur, empty_ok=True) \
-        if found else []
-    if seat is None:
-        seat = cur if sys.stdin.isatty() and sys.stdout.isatty() else \
-            ask(f"\nAgents that answer automatically (found: {', '.join(found)}; space-separated):", " ".join(cur)).split()
-    inst = {"serve": [n for n in seat if n in AGENTS]}
-    print(f"Answering automatically: {', '.join(inst['serve']) or 'nobody'}")
-    if inst["serve"] and (models or ask("\nCustomize models and effort (Enter keeps each CLI's default)? [y/N]",
-                                        "n").lower().startswith("y")):
-        for n in inst["serve"]:
-            ms, efforts = cli_models(n)
-            cm = opt(n, "model") or ""
-            inst[f"{n}_model"] = pick(f"{n} model", ms, cm) if ms else ask(f"\n{n} model (Enter: CLI default):", cm)
-            effs = efforts.get(inst[f"{n}_model"]) or efforts.get("*")
-            if effs:
-                inst[f"{n}_effort"] = pick(f"{n} effort", [(e, "") for e in effs], opt(n, "effort") or "")
-    inst["web_search"] = ask("\nLet the agents search the web (docs, papers, release notes)? Queries go to the "
-                             f"agents' web services. [{'Y/n' if web_on() else 'y/N'}]",
-                             "y" if web_on() else "n").lower().startswith("y")
-    if WS == INSTALL:
-        save_cfg(ICONFIG, inst)
-        where_to = f"saved in {ICONFIG}"
-    else:
-        first = not _json(ICONFIG).get("serve")   # no install-wide agents yet: these become the defaults
-        if ask(f"\nAlso make these the defaults for new workspaces? [{'Y/n' if first else 'y/N'}]",
-               "y" if first else "n").lower().startswith("y"):
-            save_cfg(ICONFIG, inst)
-            save_cfg(CONFIG, {k: None for k in inst})   # this workspace follows the defaults
-            where_to = f"saved as the defaults in {ICONFIG}"
-        else:
-            save_cfg(CONFIG, inst)
-            where_to = f"saved for this workspace only ({CONFIG})"
     home = os.path.join(INSTALL, ".codex-home")   # agora's own Codex home: your ~/.codex stays untouched
+    login = "codex" in found and shutil.which("codex") and not os.path.exists(os.path.join(home, "auth.json"))
+    names = (["Snapshot"] if SRC else []) + ["Agents", "Models", "Web search"] + (
+        [] if WS == INSTALL else ["Defaults"]) + (["Codex login"] if login else [])
+    with Steps(f"Setting up agora for {SRC or 'a discussion without code'}", names) as st:
+        if SRC:   # 1. excludes
+            st.show("Snapshot")
+            ex = pick_excludes(SRC)
+            if ex is not None:
+                save_cfg(CONFIG, {"exclude": ex})
+            st.record("excluded: " + (", ".join(ex if ex is not None else EXCLUDE) or "nothing"))
+        st.show("Agents")
+        if not found:
+            print("\nNo agent CLI found (claude, codex, agy): install one, then run `agora setup` again.")
+        cur = [n for n in auto() if n in found] or found
+        seat = choose("Agents that answer automatically:", [(n, "") for n in found], ticked=cur, empty_ok=True) \
+            if found else []
+        if seat is None:
+            seat = cur if sys.stdin.isatty() and sys.stdout.isatty() else \
+                ask(f"Agents that answer automatically (found: {', '.join(found)}; space-separated):", " ".join(cur)).split()
+        inst = {"serve": [n for n in seat if n in AGENTS]}
+        st.record(", ".join(inst["serve"]) or "nobody")
+        if inst["serve"]:
+            st.show("Models")
+        else:
+            st.skip("Models")
+        if inst["serve"] and (models or ask("Customize models and effort (Enter keeps each CLI's default)? [y/N]",
+                                            "n").lower().startswith("y")):
+            got = []
+            for n in inst["serve"]:
+                st.show("Models")
+                ms, efforts = cli_models(n)
+                cm = opt(n, "model") or ""
+                inst[f"{n}_model"] = pick(f"{n} model", ms, cm) if ms else ask(f"\n{n} model (Enter: CLI default):", cm)
+                effs = efforts.get(inst[f"{n}_model"]) or efforts.get("*")
+                if effs:
+                    inst[f"{n}_effort"] = pick(f"{n} effort", [(e, "") for e in effs], opt(n, "effort") or "")
+                got.append(f"{n} " + (" ".join(x for x in (inst[f"{n}_model"], inst.get(f"{n}_effort")) if x)
+                                      or "default"))
+            st.record("; ".join(got))
+        elif inst["serve"]:
+            st.record("each CLI's default" if not any(opt(n, "model") for n in inst["serve"]) else "unchanged")
+        st.show("Web search")
+        inst["web_search"] = ask("Let the agents search the web (docs, papers, release notes)? Queries go to the "
+                                 f"agents' web services. [{'Y/n' if web_on() else 'y/N'}]",
+                                 "y" if web_on() else "n").lower().startswith("y")
+        st.record("on" if inst["web_search"] else "off")
+        if WS == INSTALL:
+            save_cfg(ICONFIG, inst)
+            where_to = f"saved in {ICONFIG}"
+        else:
+            st.show("Defaults")
+            first = not _json(ICONFIG).get("serve")   # no install-wide agents yet: these become the defaults
+            if ask(f"Also make these the defaults for new workspaces? [{'Y/n' if first else 'y/N'}]",
+                   "y" if first else "n").lower().startswith("y"):
+                save_cfg(ICONFIG, inst)
+                save_cfg(CONFIG, {k: None for k in inst})   # this workspace follows the defaults
+                where_to = f"saved as the defaults in {ICONFIG}"
+                st.record("these are the defaults for new workspaces")
+            else:
+                save_cfg(CONFIG, inst)
+                where_to = f"saved for this workspace only ({CONFIG})"
+                st.record("this workspace only")
+        login = login and "codex" in inst["serve"]
+        if login:
+            st.show("Codex login")
+            login = ask("Codex isn't logged in for agora yet (it keeps its own Codex home). Log in now? [Y/n]",
+                        "y").lower().startswith("y")
+            st.record("logging in" if login else "later")
+        else:
+            st.skip("Codex login")
+    if login:   # on the normal screen: codex prints a URL to open
+        os.makedirs(home, exist_ok=True)
+        subprocess.run([shutil.which("codex"), "login"], env={**os.environ, "CODEX_HOME": home})
     if "codex" in inst["serve"] and not os.path.exists(os.path.join(home, "auth.json")):
-        codex = shutil.which("codex")
-        if codex and ask("\nCodex isn't logged in for agora yet (it keeps its own Codex home). Log in now? [Y/n]",
-                         "y").lower().startswith("y"):
-            os.makedirs(home, exist_ok=True)
-            subprocess.run([codex, "login"], env={**os.environ, "CODEX_HOME": home})
-        if not os.path.exists(os.path.join(home, "auth.json")):
-            print(f"\nLog Codex in later: `agora setup` again, or CODEX_HOME={home} codex login")
+        print(f"\nLog Codex in later: `agora setup` again, or CODEX_HOME={home} codex login")
     print(f"\nSettings {where_to}. `agora` joins the chat; `agora setup --models` picks models and efforts.")
     try:
         import rich  # noqa: F401
