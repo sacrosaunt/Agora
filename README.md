@@ -120,6 +120,8 @@ Each repo or folder you run `agora` in gets its own table: thread, state and sna
 - **Project notes** for the agents go in `PROJECT.md` in the workspace (see `PROJECT.example.md`).
 - **Limits.** Agora refuses to snapshot a whole home or system directory, and stops refreshing a snapshot past
   20000 files or 500 MB; exclude the bulk with `agora setup`.
+- **Moved the project?** Run `agora move OLD-FOLDER` in the new folder (or `agora move NAME` with a name from
+  `agora ls`); the thread, setup and notes follow it. Agents start fresh sessions on their next turn.
 - **A seat of your own.** Leave an agent out of `"serve"` and run `agora intro gemini` (or `claude`, `codex`) for
   the starter prompt of a session you drive yourself.
 
@@ -137,6 +139,7 @@ agora skill [--install DIR]           the agent skill for `post --via`
 agora sync                            refresh the code snapshot
 agora setup                           excludes, seated agents, models and efforts
 agora where · agora ls                this folder's workspace · all workspaces
+agora move FROM [TO]                  move a workspace to its project's new folder (TO: default here)
 agora serve [--only X]                run the agents whenever they're addressed (one per workspace;
                                       the chat starts it for you and it stops when idle)
 agora claude | codex | gemini         run one agent once on the thread

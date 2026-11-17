@@ -75,6 +75,21 @@ def ws_path(key, label):
     return os.path.join(DATA, f"{base}-{__import__('hashlib').sha1(key.encode()).hexdigest()[:8]}")
 
 
+def find_ws(x):
+    """A workspace by its name (as `agora ls` lists it), its dir, or the folder it was made for (where that folder is
+    now, or where it was before it moved); None if there is none."""
+    if re.fullmatch(r"[\w.-]+-[0-9a-f]{8}", x) and os.path.isfile(os.path.join(DATA, x, "workspace.json")):
+        return os.path.join(DATA, x)
+    p = os.path.realpath(os.path.expanduser(x))
+    if p.startswith(DATA + os.sep) and os.path.isfile(os.path.join(p, "workspace.json")):
+        return p
+    keys = {os.path.normcase(k) for k in (p, git_top(p) if os.path.isdir(p) else None) if k}
+    for d in sorted(os.listdir(DATA)) if os.path.isdir(DATA) else ():
+        if os.path.normcase(_json(os.path.join(DATA, d, "workspace.json")).get("src") or "") in keys:
+            return os.path.join(DATA, d)
+    return None
+
+
 def resolve_ws():
     """(workspace dir, source dir or None, how). The workspace holds the thread, state, snapshots and work dirs;
     each source folder gets its own. Legacy: an agora.json with "src" next to the script keeps the old layout
@@ -83,6 +98,9 @@ def resolve_ws():
     rest = [x for x in sys.argv[1:] if not x.startswith("-")]
     if rest[:1] == ["ls"] or not rest and {"-h", "--help"} & set(sys.argv[1:]) or rest[:1] == ["skill"]:
         return os.path.join(DATA, ".none"), None, "none"   # needs no workspace: don't create one
+    if rest[:1] == ["move"]:   # `agora move FROM [TO]`: the workspace is FROM's, wherever this runs
+        w = find_ws(rest[1]) if len(rest) > 1 else None
+        return (w or os.path.join(DATA, ".none")), (_json(os.path.join(w, "workspace.json")).get("src") if w else None), "move"
     legacy = _json(os.path.join(INSTALL, "agora.json")).get("src")
     legacy = os.path.realpath(os.path.expanduser(legacy)) if legacy else None
     src = os.path.realpath(os.path.expanduser(o["src"])) if o.get("src") else None

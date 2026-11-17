@@ -99,7 +99,8 @@ GROUPS = (   # the short command list shown after a usage mistake (agora -h has 
     ("workspace", (("where / ls", "this folder's workspace / all workspaces"),
                    ("setup", "excludes, seated agents, models"),
                    ("sync / status / new", "refresh the code snapshot / state / start an empty thread"),
-                   ("restart [--now]", "restart the serve on the code now on disk"))),
+                   ("restart [--now]", "restart the serve on the code now on disk"),
+                   ("move FROM [TO]", "the workspace follows a project moved to TO (default: here)"))),
 )
 
 
@@ -189,6 +190,9 @@ def main():
     sp.add_parser("setup", help="choose excludes, the agents to seat, and their models and efforts")
     sp.add_parser("where", help="this folder's workspace, source and config")
     sp.add_parser("ls", help="list the workspaces")
+    p = sp.add_parser("move", help="move a workspace to the project's new folder (after you moved the project)")
+    p.add_argument("frm", metavar="FROM", help="the old folder, or a workspace name from agora ls")
+    p.add_argument("to", metavar="TO", nargs="?", help="the new folder (default: this one)")
     for n in AGENTS:
         sp.add_parser(n, help=f"run {n} once headlessly on the thread")
     for c, h in (("add", "bring agents into this chat (served from the next message on)"),
@@ -213,6 +217,8 @@ def main():
         return where()
     if a.cmd == "ls":
         return list_ws()
+    if a.cmd == "move":
+        return move_ws(a.frm, a.to)
     if a.cmd == "new":   # then straight into the chat on the empty thread (in a terminal)
         new_thread()
         if not (sys.stdin.isatty() and sys.stdout.isatty()):

@@ -295,6 +295,63 @@ def stop_serve():
     return False
 
 
+def move_ws(frm, to=None):
+    """`agora move FROM [TO]`: FROM's workspace (thread, state, setup, snapshot) follows its project to the folder TO
+    (default: this one), so agora run there opens it. Its serve stops first; agents start fresh sessions on their
+    next turn, since their source folder changed."""
+    if WS_HOW != "move" or not os.path.isfile(os.path.join(WS, "workspace.json")):
+        sys.exit(f"agora: no workspace for {frm}; `agora ls` lists them (give a name from there, or the folder it was "
+                 "made for)")
+    if not SRC0:
+        sys.exit("agora: that workspace is a discussion without code: there is no folder to move")
+    to = os.path.realpath(os.path.expanduser(to or os.getcwd()))
+    if not os.path.isdir(to):
+        sys.exit(f"agora: {to} is not a folder; move the project there first, then run agora move")
+    src = git_top(to) or to
+    if src == SRC0:
+        sys.exit(f"agora: this workspace already belongs to {src}")
+    dest = ws_path(src, src)
+    check_src(src, dest)
+    if os.path.exists(dest):   # agora already ran in the new folder: fine while that thread is still empty
+        t = os.path.join(dest, "thread.jsonl")
+        n = sum(1 for ln in open(t, encoding="utf-8") if ln.strip()) if os.path.exists(t) else 0
+        if n:
+            sys.exit(f"agora: {src} already has its own thread ({n} messages, in {dest}); "
+                     f"archive it there first (agora new) or pick another folder")
+        held = []
+        for lk in ("serve.lock", "clients.lock"):
+            if os.path.exists(os.path.join(dest, "state", lk)):
+                f = open(os.path.join(dest, "state", lk), "a+")
+                if not lock(f, block=False):
+                    held.append(lk)
+                f.close()
+        if held:
+            sys.exit(f"agora: an agora chat or serve is open on {src}; close it (/quit) and run agora move again")
+        shutil.rmtree(dest)
+        print(f"replaced the empty workspace agora had started for {src}")
+    cl = lockfile("clients.lock")
+    if not lock(cl, block=False):
+        cl.close()
+        sys.exit(f"agora: an agora chat or wait is open on {SRC0}; close it (/quit) and run agora move again")
+    try:
+        if not stop_serve():
+            sys.exit("agora: couldn't stop this workspace's serve (pid in state/serve.lock); stop it and try again")
+    finally:
+        cl.close()
+    meta = _json(os.path.join(WS, "workspace.json"))
+    try:
+        os.rename(WS, dest)
+    except OSError as e:
+        sys.exit(f"agora: couldn't move {WS} to {dest} ({e.strerror}); close anything using it and try again")
+    meta.update(src=src, moved=meta.get("moved", []) + [{"from": SRC0, "at": time.strftime("%Y-%m-%d %H:%M:%S")}])
+    p = os.path.join(dest, "workspace.json")
+    with open(tmpname(p), "w") as f:
+        json.dump(meta, f, indent=1)
+    replace(tmpname(p), p)
+    print(f"moved the agora workspace from {SRC0} to {src}\n  data now in {dest}\n"
+          f"  run agora in {src} to continue the thread; agents start fresh sessions on their next turn")
+
+
 def new_thread():
     """`agora new`: archive the thread with its per-thread state (seen marks, sessions, rounds, sleeps, failures,
     logs, agents' work dirs) under archive/<time>/ and start an empty thread. Setup, project notes and the code
