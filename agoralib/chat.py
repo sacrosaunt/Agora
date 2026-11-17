@@ -443,7 +443,7 @@ def chat(to="all", after=None):
             return g.group(1) + "".join(f"\033[1;{c}m{p}\033[22;39m" if i % 2 and (c := one(p.lstrip("#"))) else p
                                         for i, p in enumerate(parts))
         # preceded by a start, a non-word character or a colour code (rich styles text right before it)
-        return re.sub(r"(^|\x1b\[[0-9;]*m|[^\w#&/])#\d{1,6}(?:(?:,|, #|[–-])#?\d{1,6})*(?!\w)",
+        return re.sub(r"(^|\x1b\[[0-9;]*m|[^\w#&/])#\d{1,6}(?:(?:,|, #|/#|[–-])#?\d{1,6})*(?!\w)",
                       hl, out, flags=re.M)
 
     def render(m):
