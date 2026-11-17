@@ -571,7 +571,7 @@ def chat(to="all", after=None):
                     emit("… " + "; ".join(f"{n} {act_text(a)}" for n, a in state["busy"].items()))
             time.sleep(0.5)
 
-    print(col("2", "Type a message and press Enter to post it to all. /help lists the commands; /quit leaves."))
+    print(col("2", f"Type a message and press Enter to post it to {(state['to'] or 'all').replace(',', ', ')}. /help lists the commands; /quit leaves."))
     if not tty and state["members"]:   # a terminal shows the roll call in the status line instead
         print("In this chat: " + ", ".join(state["members"]))
     if not tty and any(asleep(n) for n in AGENTS):
