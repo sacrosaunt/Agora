@@ -111,8 +111,13 @@ def stream(name, cmd, stdin_text, cwd, env, log, timeout, on_event):
     """Run an agent CLI that prints JSONL events, feeding each to on_event (activity tracking); returns the process."""
     import threading
     p = subprocess.Popen(cmd, cwd=cwd, env=env, text=True, stdin=subprocess.PIPE if stdin_text else subprocess.DEVNULL,
-                         stdout=subprocess.PIPE, stderr=log)
-    killer = threading.Timer(timeout, p.kill)   # started first: a child that never reads its stdin is killed too
+                         stdout=subprocess.PIPE, stderr=log, **({} if WINDOWS else {"start_new_session": True}))
+    # its own process group, so /stop (or the timeout) ends the CLI and every tool it started, not just the CLI
+    os.makedirs(RUN, exist_ok=True)
+    pidf = os.path.join(RUN, name + ".pid")
+    with open(pidf, "w") as f:
+        f.write(str(p.pid))
+    killer = threading.Timer(timeout, kill_tree, (p.pid,))   # started first: a child that never reads stdin dies too
     killer.start()
     try:
         if stdin_text:
@@ -134,6 +139,13 @@ def stream(name, cmd, stdin_text, cwd, env, log, timeout, on_event):
         p.wait()
     finally:
         killer.cancel()
+        if p.poll() is None:   # Ctrl-C or an error here: the CLI's group isn't ours to leave running
+            kill_tree(p.pid, grace=1.0)
+            p.wait()
+        try:
+            os.unlink(pidf)
+        except OSError:
+            pass
     return p
 
 
@@ -162,7 +174,7 @@ LENGTH = {
             "with path:line evidence, then what you didn't check. As long as the content needs, no longer: no "
             "preamble, recap or closing summary.",
     "independent": "INDEPENDENT ROUND: the others answer the same question without seeing your answer, and all "
-                   "answers are revealed together afterwards. Give your own full answer; do not output SLEEP because "
+                   "answers are revealed together afterwards. Give your own answer; do not output SLEEP because "
                    "someone else may cover it. ",
     "crosscheck": "CROSS-CHECK: the independent answers to #{q} were just revealed together. Say where the others "
                   "are wrong or missed something, citing code, and whether any of them changed your mind; output "
@@ -177,7 +189,8 @@ def turn_note(new_msgs):
     s = ""
     if "independent" in modes:
         s += LENGTH["independent"]
-    long = next((x for x in ("audit", "design", "independent") if x in modes), None)
+    shapes = modes | {m.get("shape") for m in new_msgs if m["from"] == "user"}   # /ind /audit: blind and long
+    long = next((x for x in ("audit", "design") if x in shapes), None)
     s += LENGTH["long"].format(mode=long) if long else LENGTH["short"]
     if rev:
         s += " " + LENGTH["crosscheck"].format(q=", #".join(map(str, rev)))
@@ -354,6 +367,7 @@ def _run_agent(name, timeout=1800, do_sync=True):
                        "the network). " if can_shell(name) else "") + rules(name)
                     + note)
     log = open(os.path.join(STATE, name + ".log"), "a")
+    stopped(name)   # a stop mark left from a turn that had already ended
     s = session(name)
     why = stale(name, s, phash)
     if why and why.endswith(("turns", "tokens")):  # a cap, not a fault: let the old session hand over first
@@ -361,6 +375,9 @@ def _run_agent(name, timeout=1800, do_sync=True):
         log.flush()
         busy(name, True, "writing a handoff note")
         r, note, _ = invoke(name, s["id"], HANDOFF.format(why=why), work, log, min(timeout, 600))
+        how = stopped(name)
+        if how:
+            return _stopped(name, how, new, asked, msgs, log)
         if r.returncode == 0 and note:
             fresh_prompt += ("\n\n# Handoff note from your previous session (private, not in the thread)\n\n"
                              + note[:3000] + "\n")
@@ -377,6 +394,9 @@ def _run_agent(name, timeout=1800, do_sync=True):
                   f"resuming {s['id']} (turn {s.get('turns', 0) + 1})") + "\n")
         log.flush()
         r, text, res = invoke(name, s and s["id"], prompt, work, log, timeout)
+        how = stopped(name)
+        if how:
+            return _stopped(name, how, new, asked, msgs, log)
         if r.returncode == 0 and text and res.get("sid"):
             session(name, {"id": res["sid"], "turns": (s or {}).get("turns", 0) + 1, "tokens": res.get("tokens", 0),
                            "upto": msgs[-1]["id"] if msgs else 0, "proto": phash, "head": head, "src": SRC_ID,
@@ -431,6 +451,30 @@ def _run_agent(name, timeout=1800, do_sync=True):
                 print(f"{x} was waiting for {name}; woken", file=sys.stderr)
         print(f"{name} " + (f"waits for {','.join(wf)}" if wf else "sleeps until pinged"), file=sys.stderr)
     return m or ("slept" if zz else None)
+
+
+def _stopped(name, how, new, asked, msgs, log):
+    """The user stopped name's reply (stop_turn): no answer, no failure, no retry; its session is dropped, since
+    a half-done turn can't be resumed."""
+    log.write(f"stopped ({how})\n")
+    session(name, drop=True)
+    failure(name, clear=True)
+    busy(name, False)
+    if how == "retry":   # its messages stay unread: answered again (by the restarted serve)
+        log_turn(name, new, "stopped", note="it answers again after the restart")
+        return "stopped"
+    if msgs:
+        seen(name, max(seen(name), msgs[-1]["id"]))
+    for q in asked:   # an independent round stops waiting for it
+        hold_outcome(q, name, stopped=True)
+    woke = []
+    if how == "drop":   # whoever waited on its answer gets the turn (as when it gives up)
+        for x in AGENTS:
+            if x != name and name in ((asleep(x) or {}).get("from") or []):
+                sleep_set(x, False)
+                woke.append(x)
+    log_turn(name, new, "stopped", note="by the user" + (f"; {', '.join(woke)} no longer wait{'s' if len(woke) == 1 else ''} for it" if woke else ""))
+    return "stopped"
 
 
 def agent_streak(msgs):

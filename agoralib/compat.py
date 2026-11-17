@@ -98,6 +98,33 @@ def detached():
     return {"start_new_session": True}
 
 
+def kill_tree(pid, grace=3.0):
+    """Kill a process and everything it started. POSIX: its process group (a child started with
+    start_new_session=True leads its own), SIGTERM then SIGKILL after grace seconds; Windows: taskkill /T /F.
+    Returns False when there was nothing to kill."""
+    if WINDOWS:
+        return subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True).returncode == 0
+    import signal
+    try:
+        if os.getpgid(pid) != pid:   # not a group leader we started (a stale pid now reused): leave it alone
+            return False
+        os.killpg(pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return False
+    end = time.time() + grace   # the CLI gets a moment to exit cleanly, then the whole group goes
+    while time.time() < end:
+        time.sleep(0.1)
+        try:
+            os.killpg(pid, 0)
+        except (ProcessLookupError, PermissionError):
+            return True
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    return True
+
+
 def venv_python(venv):
     return os.path.join(venv, "Scripts", "python.exe") if WINDOWS else os.path.join(venv, "bin", "python")
 

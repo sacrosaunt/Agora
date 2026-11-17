@@ -35,17 +35,27 @@ def clip(s, width):
     return out + "…"
 
 
-HELP = """@name,name at the start   address it (sticky); @name inside a message pings a sleeping agent
+HELP = """Who answers
+  TEXT                      (to all) one agent leads, in turns; the others add only corrections
+  @all TEXT                 everyone answers at once, each seeing the replies already in
+  /ind TEXT                 everyone answers blind; the answers are shown together, then cross-checked
+                            (/ind /audit TEXT: long answers; /reveal: show the answers in so far now)
+  @name,name TEXT           only them, and later lines too (/to all switches back)
+  @name inside a message    pings that agent (wakes it if asleep); not inside `code`
+Commands
 /to NAME                  set the recipients
-/ind TEXT                 every agent answers blind; answers are revealed together (/independent)
 /audit TEXT, /design TEXT ask for a longer structured answer
 /decide TEXT              record a decision; /decisions lists them
+/stop [NAME|all]          stop a reply in progress (no name: the one working, or pick one)
+/restart [now]            restart the serve on the code now on disk (e.g. after git pull); it waits for the
+                          replies in progress, or with now stops them and they are answered again
 /sleep NAME [30m] [until NAME], /wake NAME
 /last N, /all             show the last N messages, or the whole thread
 /add [NAME], /remove [NAME]   bring an agent into this chat, or take it out (no name: pick from a list)
 /status                   agents, sessions, unread counts
 /clock                    switch 12/24-hour times
-/quit or Ctrl-D           leave (// at the start posts a line beginning with / as text)"""
+/quit or Ctrl-D           leave (// at the start posts a line beginning with / as text)
+Pasting several lines posts them as one message."""
 
 
 HIST = 200   # messages printed again after a resize
@@ -241,7 +251,7 @@ def chat(to="all", after=None):
             sys.stdout.flush()
 
     SLASH = ("help", "independent", "ind", "audit", "design", "decide", "decisions", "sleep", "wake", "to", "last", "all",
-             "status", "clock", "add", "remove", "kick", "quit", "q", "exit")   # the commands the input loop below accepts
+             "status", "clock", "add", "remove", "kick", "stop", "restart", "reveal", "quit", "q", "exit")   # the commands the input loop below accepts
 
     def recips(s):
         """'codex,@claude' (spaces or commas) as a recipient list 'codex,claude'; '' for none; False after
@@ -254,6 +264,49 @@ def chat(to="all", after=None):
                      + f"; recipients: {', '.join(NAMES + ('all',))}. Nothing was posted."))
             return False
         return ",".join(names)
+
+    def paste_rest():
+        """The rest of a multi-line paste: the lines that arrived with the one input() returned and still wait in
+        the terminal. Returns (lines, whether the terminal already echoed them)."""
+        if not tty:
+            return [], False
+        out = []
+        if WINDOWS:   # the console echoes them as input() reads them
+            import msvcrt
+            time.sleep(0.03)
+            while msvcrt.kbhit():
+                try:
+                    out.append(input())
+                except (EOFError, KeyboardInterrupt):
+                    break
+                time.sleep(0.03)
+            return out, True
+        import select   # readline read up to the first newline; the rest arrived unechoed, while it had echo off
+        buf = b""
+        try:
+            while select.select([sys.stdin], [], [], 0.03)[0]:
+                b = os.read(sys.stdin.fileno(), 65536)
+                if not b:
+                    break
+                buf += b
+        except (OSError, ValueError):
+            pass
+        return buf.decode(errors="replace").splitlines(), False
+
+    def address(line):
+        """A leading @name,name: sets the recipients (sticky) and comes off the text. A leading @all stays in it
+        (it asks everyone: no lead turn) unless a /command follows. None: nothing to post (a typo, or no text)."""
+        if not re.match(r"@\s*[A-Za-z]", line):
+            return line
+        tgt, _, rest = line[1:].lstrip().partition(" ")   # "@ codex hi" works like "@codex hi"
+        tgt = recips(tgt)
+        if tgt is False:   # a typo: nothing posted, and the recipients stay what they were
+            return None
+        state["to"] = tgt
+        rest = rest.strip()
+        if not rest:
+            return None
+        return rest if tgt.lower() != "all" or rest.startswith("/") else line
 
     def hl_input(buf):
         """The typed line with pings coloured, including every name in a leading @a,b recipient list, and a leading
@@ -373,7 +426,16 @@ def chat(to="all", after=None):
             state["members"] = round_members()
             notes = []
             for q in open_rounds():
-                notes.append(f"◆ #{q} independent: {len(round_status(q))}/{len(members(q))} in")
+                st = round_status(q)
+                ans = sorted(h["ts"] for h in st.values() if h.get("text") and h.get("ts"))
+                hint = ""   # 2+ answers in and the rest still at it a minute after the last one: offer them now
+                if len(ans) >= 2 and len(st) < len(members(q)):
+                    try:
+                        if time.time() - time.mktime(time.strptime(ans[-1], "%Y-%m-%d %H:%M:%S")) > 60:
+                            hint = f" · /reveal shows the {len(ans)} in now"
+                    except ValueError:
+                        pass
+                notes.append(f"◆ #{q} independent: {len(st)}/{len(members(q))} in{hint}")
             if os.path.exists(os.path.join(STATE, "halted")):
                 notes.append("⏸ budget reached: agents wait for you")
             state["notes"] = notes
@@ -402,6 +464,10 @@ def chat(to="all", after=None):
                     emit(col("31", f"{n} gave up on {ids} {r['note']}; those messages are skipped"))
                 elif o == "budget":
                     emit(col("33", f"budget reached ({r['note']} since you spoke): agents wait for your next message"))
+                elif o == "stopped":
+                    emit(col("33", f"■ {n} stopped on {ids}: {r['note']}"))
+                elif o == "restart":
+                    emit(col("36", f"◇ {r['note']}"))
                 elif o == "roster":
                     emit(col("36", f"◇ {r['note']}"))
                     state["members"] = round_members()
@@ -454,14 +520,20 @@ def chat(to="all", after=None):
         with lock:
             state["reading"] = False   # until the next input() draws its own prompt
         cols = max(1, shutil.get_terminal_size().columns)   # 0 in a pty with no size
-        vis = vwidth(plain_prompt()) + vwidth(line)
-        echo_rows = max(1, -(-vis // cols))   # rows your typed line takes = rows from its first row to the cursor
+        rows = lambda t: max(1, -(-vwidth(t) // cols))
+        echo_rows = rows(plain_prompt() + line)   # rows your typed line takes = rows from its first row to the cursor
+        extra, echoed = paste_rest()   # the other lines of a paste: one message, not one per line
+        if echoed:
+            echo_rows += sum(rows(x) for x in extra)
         with lock:  # Enter left the status line above your line: clear both, redraw your line in its place
-            if state["shown"] and tty:
-                sys.stdout.write(f"\033[{echo_rows + 1}A\r\033[J" + prompt() + hl_input(line) + "\r\n")
+            if tty and (state["shown"] or extra):
+                sys.stdout.write(f"\033[{echo_rows + (1 if state['shown'] else 0)}A\r\033[J" + prompt() + hl_input(line)
+                                 + "\r\n" + "".join(pings(x) + "\r\n" for x in extra))
                 sys.stdout.flush()
                 state["shown"] = False
-        line = line.strip()
+        if extra and not echoed:
+            echo_rows += sum(rows(x) for x in extra)
+        line = "\n".join([line] + extra).strip()
         if not line:
             continue
         if line in ("/q", "/quit", "/exit"):
@@ -526,6 +598,58 @@ def chat(to="all", after=None):
                 except ValueError:
                     emit(col("31", f"bad duration {rest[1]!r}; e.g. 30m, 2h"))
             continue
+        ms = re.match(r"/stop(?:\s+(.*))?$", line)
+        if ms:
+            arg = [x.strip().lstrip("@").lower() for x in re.split(r"[\s,]+", ms.group(1) or "") if x.strip()]
+            work = [n for n in AGENTS if running(n)]
+            bad = [n for n in arg if n not in AGENTS + ("all",)]
+            if bad:
+                near = difflib.get_close_matches(bad[0], AGENTS + ("all",), 1, 0.5)
+                emit(col("31", f"no agent {bad[0]!r}" + (f" (did you mean {near[0]}?)" if near else "")
+                         + "; usage: /stop [NAME|all]"))
+                continue
+            if not work:
+                emit(col("2", "nobody is working on a reply"))
+                continue
+            how = "quiet" if "all" in arg else "drop"   # all: silence; one: whoever waits on it gets the turn
+            names = work if "all" in arg else arg
+            if not names and len(work) == 1:
+                names = work
+            elif not names:
+                if not tty:
+                    emit(col("31", f"usage: /stop NAME|all; working: {', '.join(work)}"))
+                    continue
+                with lock:
+                    names = choose("Stop whose reply:", [(n, act_text(state["busy"][n]) if n in state["busy"] else "")
+                                                        for n in work], col)
+                if not names:
+                    continue
+            for n in names:
+                if n not in work or not stop_turn(n, how):
+                    emit(col("2", f"{n} isn't working on a reply"))
+            continue
+        mr = re.match(r"/restart(\s+now)?\s*$", line)
+        if line.startswith("/restart") and re.match(r"/restart(\s|$)", line):
+            if not mr:
+                emit(col("31", "usage: /restart [now]"))
+                continue
+            was = serve_running()
+            wait = restart_serve(now=bool(mr.group(1)))
+            emit(col("36", "◇ " + ("started the serve" if not was else
+                                    f"stopping {', '.join(wait)}; the serve restarts, then answers again" if wait and mr.group(1) else
+                                    f"the serve restarts once {', '.join(wait)} finish{'es' if len(wait) == 1 else ''} "
+                                    "(/restart now stops them)" if wait else "restarting the serve")))
+            continue
+        if line == "/reveal":
+            qs = [q for q in open_rounds() if any(h.get("text") for h in round_status(q).values())]
+            if not qs:
+                emit(col("2", "no independent round has an answer in yet" if open_rounds() else "no independent round is open"))
+                continue
+            late = sorted({n for q in qs for n in members(q) if n not in round_status(q)})
+            reveal_due(force=True, only=qs)
+            if late:
+                emit(col("2", f"{', '.join(late)} still working: {'its' if len(late) == 1 else 'their'} answer posts when done"))
+            continue
         if re.match(r"/to(\s|$)", line):
             tgt = recips(line[3:])
             if tgt is not False:
@@ -539,11 +663,15 @@ def chat(to="all", after=None):
         if line == "/decisions":
             emit(decisions_text(load()).rstrip() or "no decisions recorded yet (/decide TEXT records one)")
             continue
-        mode = None
+        addressed = line.startswith("@")
+        line = address(line)   # @codex /ind TEXT: the recipients first, then the command
+        if line is None:
+            continue
+        mode, shape = None, None
         mm = re.match(r"/(independent|ind|audit|design|decide)\b\s*(.*)", line, re.S)
         if line.startswith("//"):   # posted as text, one slash
             line = line[1:]
-        elif not mm and re.match(r"/[A-Za-z]+(\s|$)", line):   # an unknown /word (a path like /src/x isn't one)
+        elif not mm and not addressed and re.match(r"/[A-Za-z]+(\s|$)", line):   # an unknown /word (a path like /src/x isn't one)
             w = line.split()[0]
             near = difflib.get_close_matches(w[1:].lower(), SLASH, 1, 0.6)
             emit(col("31", f"unknown command {w}" + (f" (did you mean /{near[0]}?)" if near else "")
@@ -551,24 +679,19 @@ def chat(to="all", after=None):
             continue
         elif mm:
             mode, line = {"ind": "independent", "decide": "decision"}.get(mm.group(1), mm.group(1)), mm.group(2).strip()
+            sm = re.match(r"/(audit|design)\b\s*(.*)", line, re.S) if mode == "independent" else None
+            if sm:   # /ind /audit TEXT: blind, with long answers
+                shape, line = sm.group(1), sm.group(2).strip()
             if not line:
                 emit(col("31", f"usage: /{mm.group(1)} TEXT"))
                 continue
-        if re.match(r"@\s*[A-Za-z]", line):
-            tgt, _, rest = line[1:].lstrip().partition(" ")   # "@ codex hi" works like "@codex hi"
-            tgt = recips(tgt)
-            if tgt is False:   # a typo: nothing posted, and the recipients stay what they were
-                continue
-            state["to"] = tgt
-            if tgt.lower() != "all":   # a leading @all stays in the text: it asks everyone (no lead turn)
-                line = rest.strip()
-            elif not rest.strip():
-                continue
-            if not line:
+            line = address(line)   # /ind @codex TEXT
+            if line is None:
                 continue
         state["posting"] = True
         try:
-            m = post("user", "all" if mode == "decision" else state["to"], line, mode=mode)
+            m = post("user", "all" if mode == "decision" else state["to"], line, mode=mode,
+                     extra={"shape": shape} if shape else None)
         except SystemExit as e:
             state["posting"] = False
             emit(col("31", str(e)))

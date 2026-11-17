@@ -229,6 +229,13 @@ def protocol():
 def auto():
     """The agents the serve loop runs headlessly here, read fresh from the config (so `agora add` / `remove` and
     /add, /remove in a chat take effect at once). No "serve" key: all of them; an empty list: none."""
+    s = serve_cfg()
+    only = _json(os.path.join(STATE, "serve.json")).get("only")   # `agora serve --only` narrows it further
+    return tuple(n for n in s if not only or n in only.split(","))
+
+
+def serve_cfg():
+    """The config's "serve" list alone (all agents when absent), before any `serve --only`."""
     cfg = _json(ICONFIG) if WS == INSTALL else {**_json(ICONFIG), **_json(CONFIG)}
     s = cfg.get("serve")
     return tuple(n for n in AGENTS if n in s) if isinstance(s, list) else AGENTS

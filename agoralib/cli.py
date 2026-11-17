@@ -92,11 +92,14 @@ GROUPS = (   # the short command list shown after a usage mistake (agora -h has 
     ("agents", ((" | ".join(AGENTS) or "AGENT", "run that agent once on the thread"),
                 ("add / remove NAME", "bring an agent into this chat / take it out"),
                 ("sleep / wake", "pause / resume an agent"),
+                ("stop [NAME|all]", "stop a reply in progress"),
+                ("reveal", "show an independent round's answers in so far"),
                 ("reset [NAME]", "drop agent sessions; next turn starts fresh"),
                 ("intro NAME / skill", "starter prompt / skill for an agent you run yourself"))),
     ("workspace", (("where / ls", "this folder's workspace / all workspaces"),
                    ("setup", "excludes, seated agents, models"),
-                   ("sync / status / new", "refresh the code snapshot / state / start an empty thread"))),
+                   ("sync / status / new", "refresh the code snapshot / state / start an empty thread"),
+                   ("restart [--now]", "restart the serve on the code now on disk"))),
 )
 
 
@@ -191,6 +194,12 @@ def main():
     for c, h in (("add", "bring agents into this chat (served from the next message on)"),
                  ("remove", "take agents out of this chat")):
         p = sp.add_parser(c, help=h); p.add_argument("names", nargs="+", metavar="NAME")
+    p = sp.add_parser("stop", help="stop agents' replies in progress (killed with every tool they started)")
+    p.add_argument("names", nargs="*", metavar="NAME", help="default: every agent working now; all: the same, "
+                   "and nobody waiting on them is woken")
+    p = sp.add_parser("restart", help="restart the serve on the code now on disk (after the replies in progress)")
+    p.add_argument("--now", action="store_true", help="stop the replies in progress; they are answered again")
+    sp.add_parser("reveal", help="show the answers held in open independent rounds now, without waiting for the rest")
     p = sp.add_parser("reset", help="drop agent sessions; their next turn starts fresh"); p.add_argument("name", nargs="?", default="all")
     sp.add_parser("new", help="start an empty thread; the old one is archived")
     p = sp.add_parser("serve"); p.add_argument("--budget", type=int, default=BUDGET)
@@ -353,7 +362,7 @@ def main():
             print(f"synced {n} files to {CODE}")
     elif a.cmd in AGENTS:
         m = run_agent(a.cmd)
-        print("slept" if m == "slept" else f"held for independent round #{m['held']}" if m and m.get("held")
+        print("slept" if m == "slept" else "stopped" if m == "stopped" else f"held for independent round #{m['held']}" if m and m.get("held")
               else f"posted #{m['id']}" if m else "no reply")
     elif a.cmd == "serve":
         serve_loop(a)
@@ -366,6 +375,24 @@ def main():
         print(f"{', '.join(changed)} {'added to' if a.cmd == 'add' else 'removed from'} this chat" if changed
               else f"{', '.join(names)} {'already' if a.cmd == 'add' else 'not'} in this chat")
         print("in this chat: " + (", ".join(round_members()) or "nobody yet (agora add NAME)"))
+    elif a.cmd == "stop":
+        names = [x.strip().lstrip("@").lower() for n in a.names for x in n.split(",") if x.strip()]
+        bad = [n for n in names if n not in AGENTS + ("all",)]
+        if bad:
+            sys.exit(f"agora: no agent {bad[0]!r}; agents: {', '.join(AGENTS)} (or all)")
+        work = [n for n in AGENTS if running(n)]
+        pick = work if not names or "all" in names else names
+        done = [n for n in pick if stop_turn(n, "quiet" if "all" in names else "drop")]
+        print(f"stopped {', '.join(done)}" if done else "nobody " + ("of " + ", ".join(pick) + " " if names and "all" not in names else "") + "is working on a reply")
+    elif a.cmd == "restart":
+        was = serve_running()
+        wait = restart_serve(now=a.now)
+        print("started the serve" if not was else f"the serve restarts once {', '.join(wait)} "
+              f"{'are stopped' if a.now else ('finishes' if len(wait) == 1 else 'finish')}" if wait else "the serve is restarting")
+    elif a.cmd == "reveal":
+        qs = [q for q in open_rounds() if any(h.get("text") for h in round_status(q).values())]
+        reveal_due(force=True, only=qs)
+        print(f"revealed {', '.join(f'#{q}' for q in qs)}" if qs else "no open independent round has an answer yet")
     elif a.cmd == "reset":
         for n in (AGENTS if a.name == "all" else [a.name]):
             if session(n):

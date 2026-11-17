@@ -87,7 +87,11 @@ agora skill --install ~/.claude/skills    # teach Claude Code when and how (Code
 | ---------------------------- | ----------------------------------------------------- |
 | `@codex,claude your text`    | address a message (sticky until changed)              |
 | `… @gemini …` · `… @all …`   | ping a sleeping agent (or everyone) from inside a message (not inside `code`) |
-| `/independent TEXT` (`/ind`) | everyone answers blind; answers revealed together, then cross-checked |
+| `/independent TEXT` (`/ind`) | everyone answers blind (short); answers revealed together, then cross-checked |
+| `/ind /audit TEXT`           | blind answers in the long, structured form            |
+| `/reveal`                    | show the blind answers that are in now, without waiting for the rest |
+| `/stop [NAME\|all]`          | stop a reply in progress (several working: pick one)  |
+| `/restart [now]`             | restart the serve once replies finish (`now`: stop them; they answer again after) |
 | `/audit TEXT` · `/design TEXT` | ask for a longer, structured answer (summary, findings with evidence) |
 | `/decide TEXT` · `/decisions` | record a decision (nobody is asked to reply) · list them |
 | `/to NAME`                   | set the recipients                                    |
@@ -98,7 +102,8 @@ agora skill --install ~/.claude/skills    # teach Claude Code when and how (Code
 | `/clock`                     | switch between 12- and 24-hour times (saved)          |
 | `/quit` or Ctrl-D            | leave                                                 |
 
-Agents with nothing new stay quiet; a question to `all` gets one lead answer (rotating claude → codex → gemini) and
+A plain message goes to the current recipients; `@codex /ind TEXT` and `/ind @codex TEXT` both work. Pasting several
+lines posts them as one message. Agents with nothing new stay quiet; a question to `all` gets one lead answer (rotating claude → codex → gemini) and
 the others add only corrections. `@all` asks everyone.
 
 ## Projects

@@ -285,7 +285,7 @@ def hold_outcome(q, name, **kw):
         wjson(p, {"from": name, **kw})
 
 
-def reveal_due(force=False):
+def reveal_due(force=False, only=None):
     """Post the held answers of every round that is complete (all members answered, slept or failed) or past
     ROUND_TIMEOUT, together, each addressed to the user and the other agents so they cross-check one another."""
     if not open_rounds():
@@ -294,7 +294,8 @@ def reveal_due(force=False):
     with open(os.path.join(INDEP, ".lock"), "w") as lk:   # one revealer at a time
         lock(lk)
         for q in open_rounds():
-            _reveal(q, force)
+            if only is None or q in only:   # /reveal: these rounds now, with the answers in so far
+                _reveal(q, force)
 
 
 def _reveal(q, force):
@@ -316,10 +317,12 @@ def _reveal(q, force):
     open(os.path.join(INDEP, str(q), "revealed"), "w").close()
     missing = [n for n in members(q) if n not in held]
     failed = [n for n, h in held.items() if h.get("failed")]
-    quiet = [n for n, h in held.items() if not h.get("text") and not h.get("failed")]
+    halted = [n for n, h in held.items() if h.get("stopped")]
+    quiet = [n for n, h in held.items() if not h.get("text") and not h.get("failed") and not h.get("stopped")]
     log_turn("reveal", [q], "revealed", note=f"{len(answers)} answers"
              + (f"; no answer from {', '.join(missing)}" if missing else "")
              + (f"; failed: {', '.join(failed)}" if failed else "")
+             + (f"; stopped: {', '.join(halted)}" if halted else "")
              + (f"; nothing to add: {', '.join(quiet)}" if quiet else ""))
 
 
@@ -327,8 +330,8 @@ TURNS = os.path.join(STATE, "turns.jsonl")  # one line per agent turn: who, whic
 
 
 def log_turn(name, ids, outcome, msg=None, note=""):
-    """outcome: posted (msg = id), held (independent round), slept (nothing to add), failed, gave up, budget,
-    revealed."""
+    """outcome: posted (msg = id), held (independent round), slept (nothing to add), failed, gave up, stopped,
+    budget, revealed, roster, restart."""
     os.makedirs(STATE, exist_ok=True)
     with open(TURNS, "a") as f:
         f.write(json.dumps({"t": time.time(), "name": name, "ids": list(ids), "outcome": outcome, "msg": msg,
@@ -384,6 +387,49 @@ def note_failure(name, ids, rc, fatal=False):
     os.makedirs(FAIL, exist_ok=True)
     wjson(os.path.join(FAIL, name + ".json"), rec)
     return rec
+
+
+RUN = os.path.join(STATE, "run")   # <name>.pid while an agent CLI runs a reply; <name>.stop once it was stopped
+
+
+def running(name):
+    """The pid of name's agent CLI while it works on a reply (it leads its own process group), else None."""
+    try:
+        return int(open(os.path.join(RUN, name + ".pid")).read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def stop_turn(name, how="drop"):
+    """Stop name's reply in progress: its CLI and everything that CLI started are killed. how: "drop" (the
+    messages it was answering count as answered and whoever waits on it is woken), "quiet" (the same, but nobody
+    is woken: /stop all), "retry" (they stay unread and are answered again, e.g. by a restarted serve). The turn's
+    own process does the bookkeeping when its CLI exits (see stopped()). True if a reply was running."""
+    pid = running(name)
+    if pid is None:
+        return False
+    os.makedirs(RUN, exist_ok=True)
+    mark = os.path.join(RUN, name + ".stop")
+    with open(mark, "w") as f:
+        f.write(how)
+    if kill_tree(pid):
+        return True
+    try:
+        os.unlink(mark)
+    except OSError:
+        pass
+    return False
+
+
+def stopped(name):
+    """How name's last CLI run was stopped (see stop_turn), else None; clears the mark."""
+    p = os.path.join(RUN, name + ".stop")
+    try:
+        how = open(p).read().strip() or "drop"
+        os.unlink(p)
+        return how
+    except OSError:
+        return None
 
 
 def give_up(name, f):

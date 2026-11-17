@@ -53,12 +53,7 @@ def ensure_serve(quiet=False):
         if f is None:
             return   # already running
         f.close()    # free it for the child
-        pol = serve_policy()
-        log = open(os.path.join(STATE, "serve.log"), "a")
-        subprocess.Popen(SELF + ["--dir", WS, "serve", "--auto"]
-                         + (["--only", pol["only"]] if pol.get("only") else [])
-                         + (["--budget", str(pol["budget"])] if pol.get("budget") else []),
-                         stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, cwd=WS, **detached())
+        pol = spawn_serve()
         for _ in range(100):   # until the child holds the serve lock (so the next starter sees it running)
             time.sleep(0.1)
             f = serve_lock()
@@ -70,17 +65,56 @@ def ensure_serve(quiet=False):
               f"(log: {os.path.join(STATE, 'serve.log')})", file=sys.stderr)
 
 
+def spawn_serve():
+    """Start a background serve with the saved options (see serve_policy); returns them."""
+    pol = serve_policy()
+    log = open(os.path.join(STATE, "serve.log"), "a")
+    subprocess.Popen(SELF + ["--dir", WS, "serve", "--auto"]
+                     + (["--only", pol["only"]] if pol.get("only") else [])
+                     + (["--budget", str(pol["budget"])] if pol.get("budget") else []),
+                     stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, cwd=WS, **detached())
+    return pol
+
+
+RESTART = os.path.join(STATE, "restart")   # present while a restart waits for the replies in progress
+
+
+def serve_running():
+    f = serve_lock()
+    if f is None:
+        return True
+    f.close()
+    return False
+
+
+def restart_serve(now=False):
+    """/restart, `agora restart`: the serve starts again on the code now on disk, so a `git pull` takes effect.
+    It first lets the replies in progress finish (it starts no new ones meanwhile), or with now stops them; the
+    messages they were answering stay unread, so the new serve answers them. Returns the agents it waits for."""
+    if not serve_running():
+        ensure_serve(quiet=True)
+        if not serve_running():   # autoserve is off: start one anyway, the user asked for it
+            spawn_serve()
+        return []
+    os.makedirs(STATE, exist_ok=True)
+    open(RESTART, "w").close()   # first: a stopped reply must not be started again by this serve
+    if now:
+        for n in AGENTS:
+            stop_turn(n, "retry")
+    return list(busy_now())
+
+
 def serve_loop(a):
     """`agora serve`: answer as the serve agents whenever a message is addressed to them."""
     import threading
     def roster():
-        return a.only.split(",") if a.only else list(auto())   # re-read every pass: `agora add` / remove
-    who = roster()
+        return list(auto())   # re-read every pass: `agora add` / remove (and --only, saved in serve.json)
     held = serve_lock()   # one serve per workspace (kept open for the life of the process)
     if held is None:
         sys.exit(0 if a.auto else "agora serve is already running (see state/serve.lock)")
     if not a.auto:   # auto-started serves reuse these
         serve_policy(a.only, a.budget if a.budget != BUDGET else None, save=True)
+    who = roster()
     idle_after = float(CFG.get("idle_exit", 1800)) if a.auto else 0   # seconds; 0: never
     last_busy = time.time()
 
@@ -97,7 +131,7 @@ def serve_loop(a):
     def turn(name, ids):
         try:
             m = run_agent(name, do_sync=False, served=True)
-            print(f"{time.strftime('%H:%M:%S')} {name} -> " + ("asleep" if m == "slept" else
+            print(f"{time.strftime('%H:%M:%S')} {name} -> " + ("asleep" if m == "slept" else "stopped" if m == "stopped" else
                   "nothing new" if m == "nothing" else
                   f"held for round #{m['held']}" if m and m.get("held") else
                   f"#{m['id']}" if m else "failed"), flush=True)
@@ -114,10 +148,27 @@ def serve_loop(a):
     halted = os.path.join(STATE, "halted")   # present while the budget stops the agents (the chat shows it)
     if os.path.exists(halted):   # left over from an earlier serve: recomputed below
         os.unlink(halted)
+    if os.path.exists(RESTART):   # asked of an earlier serve that is gone: this one already runs the new code
+        os.unlink(RESTART)
     while True:
         if roster() != who:
             print(f"{time.strftime('%H:%M:%S')} now serving {roster()}", flush=True)
             who[:] = roster()   # in place: quiet() reads it too
+        if os.path.exists(RESTART):   # start no new replies; once the running ones are done, hand over
+            with wlock:
+                idle = not working
+            if idle:
+                try:
+                    os.unlink(RESTART)
+                except OSError:
+                    pass
+                log_turn("serve", [], "restart", note="serve restarted on the current code")
+                print(f"{time.strftime('%H:%M:%S')} restarting (log: {os.path.join(STATE, 'serve.log')})", flush=True)
+                held.close()   # the new serve takes the lock
+                spawn_serve()
+                return
+            time.sleep(1)
+            continue
         reveal_due()
         msgs = load()
         todo = []
@@ -181,11 +232,14 @@ def seat(names, add, by="user"):
     workspace's agora.json). An added agent answers from your latest message if nobody has answered it yet, else
     from the next one (its fresh session still reads the thread); a removed one finishes a turn it is in, then answers no more. Logged so every open chat shows it.
     Returns the names that changed."""
-    cur = list(auto())
+    cur, raw = list(auto()), serve_cfg()
     changed = [n for n in AGENTS if n in names and (n in cur) != add]
     if not changed:
         return []
-    save_cfg(CONFIG, {"serve": [n for n in AGENTS if (n in cur or n in changed) and not (n in changed and not add)]})
+    save_cfg(CONFIG, {"serve": [n for n in AGENTS if (n in raw or n in changed) and not (n in changed and not add)]})
+    pol = serve_policy()
+    if add and pol.get("only"):   # a serve started with --only serves the added agent too
+        serve_policy(",".join(n for n in AGENTS if n in pol["only"].split(",") or n in changed), pol.get("budget"), save=True)
     msgs = load()
     for n in changed:
         if add and msgs:
@@ -222,6 +276,8 @@ def stop_serve():
         pid = int(open(os.path.join(STATE, "serve.lock")).read().strip())
     except (OSError, ValueError):
         return False
+    for n in AGENTS:   # agent runs lead their own process groups: stop them first (their messages stay unread)
+        stop_turn(n, "retry")
     if WINDOWS:   # the whole tree: the serve and the agent CLIs it started
         subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True)
     else:
