@@ -278,11 +278,14 @@ def chat(to="all", after=None):
                 used += vwidth(z)
         return out
 
-    def emit(text):
-        """Print above the prompt, keeping the typing line (if any) directly above what you are typing."""
+    def emit(text, again=False):
+        """Print above the prompt, keeping the typing line (if any) directly above what you are typing.
+        again: replace the line printed last (it is redrawn with more in it)."""
         with lock:
             buf = line_buffer()
-            out = ("\r" + mv(up() + (1 if state["shown"] else 0)) + "\033[J" if tty else "") + text + "\n"
+            state["slept"] = None   # the next "nothing to add" starts a new line
+            out = ("\r" + mv(up() + (1 if state["shown"] else 0) + (1 if again else 0)) + "\033[J" if tty else "") \
+                + text + "\n"
             state["shown"] = has_line()
             if state["shown"]:
                 out += typing_line() + "\n"
@@ -525,8 +528,12 @@ def chat(to="all", after=None):
                 o, n = r["outcome"], r["name"]
                 if r["ids"] and set(r["ids"]) <= state.get("hid", set()) and o in ("slept", "posted"):
                     continue   # a turn on hidden bookkeeping only (e.g. a check with nothing to object)
-                if o == "slept":
-                    emit(col("2", f"{n}: nothing to add ({ids})"))
+                if o == "slept":   # the same agent passing again, with nothing in between: one line
+                    prev = state.get("slept") if tty else None
+                    same = bool(prev) and prev[0] == n
+                    got = prev[1] + [i for i in r["ids"] if i not in prev[1]] if same else list(r["ids"])
+                    emit(col("2", f"{n}: nothing to add ({', '.join(f'#{i}' for i in got[-4:])})"), again=same)
+                    state["slept"] = (n, got)
                 elif o == "held":
                     emit(col("2", f"{n} answered ({r['note']}; held until all are in)"))
                 elif o == "failed":
@@ -592,6 +599,7 @@ def chat(to="all", after=None):
             break
         with lock:
             state["reading"] = False   # until the next input() draws its own prompt
+            state["slept"] = None      # your line now sits under it: don't redraw over it
         cols = max(1, shutil.get_terminal_size().columns)   # 0 in a pty with no size
         rows = lambda t: max(1, -(-vwidth(t) // cols))
         echo_rows = rows(plain_prompt() + line)   # rows your typed line takes = rows from its first row to the cursor
