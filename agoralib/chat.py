@@ -468,6 +468,8 @@ def chat(to="all", after=None):
                     emit(col("33", f"■ {n} stopped on {ids}: {r['note']}"))
                 elif o == "restart":
                     emit(col("36", f"◇ {r['note']}"))
+                elif o == "notice":
+                    emit(col("33", f"⚠ {r['note']}"))
                 elif o == "roster":
                     emit(col("36", f"◇ {r['note']}"))
                     state["members"] = round_members()

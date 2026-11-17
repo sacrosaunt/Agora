@@ -266,6 +266,17 @@ def seat(names, add, by="user"):
     return changed
 
 
+def _kill_serve(pid):
+    if WINDOWS:   # the whole tree: the serve and the agent CLIs it started
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True)
+    else:
+        import signal
+        try:   # an auto-started serve leads its own process group, which its agent runs share
+            os.killpg(pid, signal.SIGTERM) if os.getpgid(pid) == pid else os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+
 def stop_serve():
     """Stop this workspace's serve (and the agent turns it is running). True once none holds the serve lock."""
     f = serve_lock()
@@ -278,14 +289,7 @@ def stop_serve():
         return False
     for n in AGENTS:   # agent runs lead their own process groups: stop them first (their messages stay unread)
         stop_turn(n, "retry")
-    if WINDOWS:   # the whole tree: the serve and the agent CLIs it started
-        subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True)
-    else:
-        import signal
-        try:   # an auto-started serve leads its own process group, which its agent runs share
-            os.killpg(pid, signal.SIGTERM) if os.getpgid(pid) == pid else os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
+    _kill_serve(pid)
     for _ in range(100):
         time.sleep(0.1)
         f = serve_lock()
@@ -312,27 +316,45 @@ def move_ws(frm, to=None):
         sys.exit(f"agora: this workspace already belongs to {src}")
     dest = ws_path(src, src)
     check_src(src, dest)
+    cl = lockfile("clients.lock")
+    if not lock(cl, block=False):
+        cl.close()
+        log_turn("agora", [], "notice", note=f"agora move to {src} is waiting for this chat to close: /quit here, then run "
+                                              "agora move again")
+        sys.exit(f"agora: an agora chat or wait is open on {SRC0}; close it (/quit) and run agora move again "
+                 "(the chat was told)")
     if os.path.exists(dest):   # agora already ran in the new folder: fine while that thread is still empty
         t = os.path.join(dest, "thread.jsonl")
         n = sum(1 for ln in open(t, encoding="utf-8") if ln.strip()) if os.path.exists(t) else 0
         if n:
             sys.exit(f"agora: {src} already has its own thread ({n} messages, in {dest}); "
                      f"archive it there first (agora new) or pick another folder")
-        held = []
-        for lk in ("serve.lock", "clients.lock"):
-            if os.path.exists(os.path.join(dest, "state", lk)):
-                f = open(os.path.join(dest, "state", lk), "a+")
-                if not lock(f, block=False):
-                    held.append(lk)
-                f.close()
-        if held:
-            sys.exit(f"agora: an agora chat or serve is open on {src}; close it (/quit) and run agora move again")
+        def held(lk):
+            p = os.path.join(dest, "state", lk)
+            if not os.path.exists(p):
+                return False
+            with open(p, "a+") as f:
+                return not lock(f, block=False)
+        if held("clients.lock"):
+            with open(os.path.join(dest, "state", "turns.jsonl"), "a") as f:
+                f.write(json.dumps({"t": time.time(), "name": "agora", "ids": [], "outcome": "notice", "msg": None,
+                                    "note": f"agora move of {SRC0} into this folder is waiting for this (empty) "
+                                            "chat to close: /quit here, then run agora move again"}) + "\n")
+            sys.exit(f"agora: an agora chat is open on {src}; close it (/quit) and run agora move again "
+                     "(the chat was told)")
+        if held("serve.lock"):   # an idle serve a chat started there: an empty thread gives it nothing to answer
+            try:
+                _kill_serve(int(open(os.path.join(dest, "state", "serve.lock")).read().strip()))
+            except (OSError, ValueError):
+                pass
+            for _ in range(100):
+                if not held("serve.lock"):
+                    break
+                time.sleep(0.1)
+            else:
+                sys.exit(f"agora: couldn't stop the serve in {dest} (pid in state/serve.lock); stop it and try again")
         shutil.rmtree(dest)
         print(f"replaced the empty workspace agora had started for {src}")
-    cl = lockfile("clients.lock")
-    if not lock(cl, block=False):
-        cl.close()
-        sys.exit(f"agora: an agora chat or wait is open on {SRC0}; close it (/quit) and run agora move again")
     try:
         if not stop_serve():
             sys.exit("agora: couldn't stop this workspace's serve (pid in state/serve.lock); stop it and try again")

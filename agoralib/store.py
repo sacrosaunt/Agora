@@ -331,7 +331,7 @@ TURNS = os.path.join(STATE, "turns.jsonl")  # one line per agent turn: who, whic
 
 def log_turn(name, ids, outcome, msg=None, note=""):
     """outcome: posted (msg = id), held (independent round), slept (nothing to add), failed, gave up, stopped,
-    budget, revealed, roster, restart."""
+    budget, revealed, roster, restart, notice (a warning for open chats)."""
     os.makedirs(STATE, exist_ok=True)
     with open(TURNS, "a") as f:
         f.write(json.dumps({"t": time.time(), "name": name, "ids": list(ids), "outcome": outcome, "msg": msg,
