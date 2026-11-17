@@ -61,6 +61,21 @@ Pasting several lines posts them as one message."""
 HIST = 200   # messages printed again after a resize
 
 
+def clip(text, width):
+    """text cut to width visible columns, keeping its colour codes (and resetting them if cut)."""
+    out, n = [], 0
+    for part in re.split(r"(\x1b\[[0-9;?]*[A-Za-z])", text):
+        if part.startswith("\x1b"):
+            out.append(part)
+            continue
+        if n + len(part) > width:
+            out.append(part[:max(0, width - n - 1)] + "…\033[0m")
+            return "".join(out)
+        out.append(part)
+        n += len(part)
+    return "".join(out)
+
+
 def choose(title, options, col=None, ticked=(), empty_ok=False, status=None):
     """A checklist in the terminal: options [(name, note)]; ↑/↓ (or j/k) move, Space (or the item's number) ticks,
     Enter confirms, Esc or q cancels. ticked: names ticked at the start. status(ticked) -> a line shown under the
@@ -89,8 +104,10 @@ def choose(title, options, col=None, ticked=(), empty_ok=False, status=None):
             if c == "\x1b":
                 if not select.select([fd], [], [], 0.05)[0]:
                     return "\x1b"   # Esc by itself
-                seq = os.read(fd, 8).decode(errors="ignore")
-                return {"[A": "up", "[B": "down", "OA": "up", "OB": "down", "[5": "pgup", "[6": "pgdn"}.get(seq[:2], "")
+                seq = os.read(fd, 2).decode(errors="ignore")   # one sequence at a time: a wheel burst sends many
+                if seq in ("[5", "[6"):
+                    os.read(fd, 1)   # the "~" of PgUp / PgDn
+                return {"[A": "up", "[B": "down", "OA": "up", "OB": "down", "[5": "pgup", "[6": "pgdn"}.get(seq, "")
             return c
     names = [n for n, _ in options]
     cur, ticked, drawn, top = 0, {n for n in ticked if n in names}, 0, 0
@@ -110,6 +127,8 @@ def choose(title, options, col=None, ticked=(), empty_ok=False, status=None):
                 rows.append((col("1", line) if i == cur else line) + col("2", note))
             if len(options) > height:
                 rows.append(col("2", f"  ({top + 1}-{min(len(options), top + height)} of {len(options)})"))
+            width = shutil.get_terminal_size((80, 24)).columns - 1
+            rows = [clip(r, width) for r in rows]   # a wrapped row would throw off the redraw and push the list down
             sys.stdout.write((f"\033[{drawn}A" if drawn else "") + "".join("\r\033[K" + r + "\n" for r in rows)
                              + ("\033[J" if drawn > len(rows) else ""))
             sys.stdout.flush()
