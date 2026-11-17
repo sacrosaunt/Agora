@@ -174,7 +174,7 @@ def serve_loop(a):
         with wlock:
             idle = not working
         for q in revealed_rounds():   # a revealed round's discussion that went quiet gets its conclusion drafted
-            if conclude_pending(q) and idle and not os.path.exists(halted) and settled(q, msgs):
+            if conclude_pending(q, msgs) and idle and not os.path.exists(halted) and settled(q, msgs):
                 calm[q] = calm.get(q, 0) + 1
                 if calm[q] >= 2:   # quiet on two passes: a reply about to start isn't missed
                     c = ask_conclusion(q, msgs)

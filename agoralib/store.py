@@ -349,13 +349,20 @@ CONCLUDE = CFG.get("conclude", True)   # once a revealed round's discussion sett
 CONCLUDE_WINDOW = 3 * 3600             # rounds revealed longer ago than this are left alone (e.g. after an upgrade)
 
 
-def conclude_pending(q):
+def conclude_pending(q, msgs=None):
     """Round q was revealed recently and its conclusion hasn't been asked for (or skipped) yet."""
     d = os.path.join(INDEP, str(q))
+    if not CONCLUDE or not os.path.exists(os.path.join(d, "revealed")) or os.path.exists(os.path.join(d, "conclude")):
+        return False
+    # age from the revealed answers in the thread, not the marker file: a copied or re-marked workspace (an
+    # upgrade, `agora move`, a sync) gets fresh file times and would conclude every old round at once
+    msgs = msgs if msgs is not None else load()
+    if any(m.get("conclude") == q or m.get("conclusion") == q for m in msgs):
+        return False   # already concluded (its marker file lost)
+    ts = [m["ts"] for m in msgs if m.get("independent") == q]
     try:
-        return CONCLUDE and not os.path.exists(os.path.join(d, "conclude")) \
-            and time.time() - os.path.getmtime(os.path.join(d, "revealed")) < CONCLUDE_WINDOW
-    except OSError:
+        return bool(ts) and time.time() - time.mktime(time.strptime(max(ts), "%Y-%m-%d %H:%M:%S")) < CONCLUDE_WINDOW
+    except ValueError:
         return False
 
 

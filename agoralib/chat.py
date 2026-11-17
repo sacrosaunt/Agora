@@ -404,18 +404,23 @@ def chat(to="all", after=None):
         if not tty or "#" not in out:
             return out
         au = state.setdefault("authors", {})
-        def hl(g):
-            q = int(g.group(2))
+        def one(q):
+            q = int(q)
             # older than what this chat has shown, or newer than any message seen: re-read the thread
             if q not in au and (not state.get("all_authors") or q > max(au, default=0)):
                 au.update({x["id"]: x["from"] for x in load()})
                 state["all_authors"] = True
             if q not in au:
-                return g.group(0)
-            c = COLORS.get(au[q], "37").removeprefix("1;")
-            return f"{g.group(1)}\033[1;{c}m#{q}\033[22;39m"
+                return None
+            return COLORS.get(au[q], "37").removeprefix("1;")
+        def hl(g):
+            # "#86,89,91" and "#97–98": the bare numbers after a citation are citations too
+            parts = re.split(r"(#?\d+)", g.group(0)[len(g.group(1)):])
+            return g.group(1) + "".join(f"\033[1;{c}m{p}\033[22;39m" if i % 2 and (c := one(p.lstrip("#"))) else p
+                                        for i, p in enumerate(parts))
         # preceded by a start, a non-word character or a colour code (rich styles text right before it)
-        return re.sub(r"(^|\x1b\[[0-9;]*m|[^\w#&/])#(\d{1,6})(?!\w)", hl, out, flags=re.M)
+        return re.sub(r"(^|\x1b\[[0-9;]*m|[^\w#&/])#\d{1,6}(?:(?:,|, #|[–-])#?\d{1,6})*(?!\w)",
+                      hl, out, flags=re.M)
 
     def render(m):
         state.setdefault("authors", {})[m["id"]] = m["from"]
