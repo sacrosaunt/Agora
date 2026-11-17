@@ -187,7 +187,8 @@ def main():
     p.add_argument("--via", metavar="AGENT", help="an agent recording it for the user"); p.add_argument("text", nargs="+")
     sp.add_parser("decisions", help="list the recorded decisions")
     sp.add_parser("sync"); sp.add_parser("status")
-    sp.add_parser("setup", help="choose excludes, the agents to seat, and their models and efforts")
+    x = sp.add_parser("setup", help="review excludes, the agents that answer, web search (--models: models, efforts)")
+    x.add_argument("--models", action="store_true", help="also pick each agent's model and effort")
     sp.add_parser("where", help="this folder's workspace, source and config")
     sp.add_parser("ls", help="list the workspaces")
     p = sp.add_parser("move", help="move a workspace to the project's new folder (after you moved the project)")
@@ -212,7 +213,7 @@ def main():
     a = ap.parse_args()
 
     if a.cmd == "setup":
-        return setup()
+        return setup(models=a.models)
     if a.cmd == "where":
         return where()
     if a.cmd == "ls":
@@ -226,7 +227,11 @@ def main():
         a.cmd, a.last = None, 0
     if WS_HOW == "new" and a.cmd in (None, "chat") and sys.stdin.isatty():
         print(f"New agora workspace for {SRC or 'a discussion without code'} (data in {WS}).")
-        if ask("Run setup now (excludes, agents, models)? [Y/n]", "y").lower().startswith("y"):
+        fits, sugg = snapshot_fits(SRC) if SRC else (True, [])
+        if _json(ICONFIG).get("serve") and fits and not sugg:   # defaults exist and the source is fine as it is
+            print(f"Using your default agents ({', '.join(auto()) or 'none'}); `agora setup` changes them.")
+        elif ask("Run setup now (excludes, agents)? " + (f"({', '.join(sugg)} look like build/data folders) " if sugg
+                 else "" if fits else "(the source is over the snapshot limits) ") + "[Y/n]", "y").lower().startswith("y"):
             setup()
     if a.cmd in (None, "chat"):
         msgs = load()
@@ -274,7 +279,7 @@ def main():
         if live:
             chat(a.to, after=m["id"] - 1)
     elif a.cmd == "read":
-        msgs = load()
+        msgs = [m for m in load() if not m.get("hidden") or a.who and a.who.lower() in m["to"]]
         if a.new:
             if not a.who:
                 sys.exit("--new needs -a NAME")
@@ -292,7 +297,8 @@ def main():
         while True:
             msgs, last = load(), seen(a.who)
             if any(for_me(m, a.who) and m["id"] > last for m in msgs):
-                new = [m for m in msgs if m["id"] > last and m["from"] != a.who]  # everything, not just yours
+                new = [m for m in msgs if m["id"] > last and m["from"] != a.who   # everything, not just yours
+                       and (not m.get("hidden") or a.who in m["to"])]
                 seen(a.who, msgs[-1]["id"])
                 sleep_set(a.who, False)
                 if a.who != "user":
@@ -316,9 +322,12 @@ def main():
         while True:
             new = [m for m in load() if m["id"] > after]
             if new:
+                after = new[-1]["id"]
+                new = [m for m in new if not m.get("hidden")]
+            if new:
                 os.makedirs(STATE, exist_ok=True)
                 with open(tmpname(cur), "w") as f:
-                    f.write(str(new[-1]["id"]))
+                    f.write(str(after))
                 replace(tmpname(cur), cur)
                 print("\n".join(fmt(m) for m in new))
                 return

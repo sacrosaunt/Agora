@@ -150,8 +150,9 @@ def stream(name, cmd, stdin_text, cwd, env, log, timeout, on_event):
 
 
 def web_on():
-    """Agents may search the web (config web_search, env AGORA_WEB_SEARCH; default on)."""
-    on = os.environ.get("AGORA_WEB_SEARCH", CFG.get("web_search", True))
+    """Agents may search the web (config web_search, env AGORA_WEB_SEARCH; default off: queries leave the
+    machine and can carry project details)."""
+    on = os.environ.get("AGORA_WEB_SEARCH", CFG.get("web_search", False))
     return str(on).lower() not in ("false", "0", "no", "off")
 
 
@@ -195,12 +196,17 @@ LENGTH = {
                   "are wrong or missed something, citing code, and whether any of them changed your mind; output "
                   "only SLEEP if you agree and have nothing to add.",
     "conclude": "CONCLUSION of #{q}: its discussion has settled and you draft the conclusion for the user; the others "
-                "will check it. First line: the bottom line in one sentence. Then **Agreed**, **Disputed** (who holds "
-                "what, and why) and **Next step**, short bullets citing #N messages and path:line where it matters. "
-                "State each agent's position fairly, your own included, and add nothing new. Not a decision: the user "
-                "decides. Do not output SLEEP; no TO: line (it goes to the user and the others).",
-    "check": "CHECK the conclusion of #{q} (just posted): object, citing the message or code, only if it misstates "
-             "your position or the evidence, or omits a live disagreement; otherwise output only SLEEP.",
+                "check the draft privately first. First line: the bottom line in one sentence. Then **Agreed**, "
+                "**Disputed** (who holds what, and why) and **Next step**, short bullets citing #N messages and "
+                "path:line where it matters. State each agent's position fairly, your own included, and add nothing "
+                "new. Not a decision: the user decides. Do not output SLEEP; no TO: line.",
+    "check": "CHECK the draft conclusion of #{q} (only the agents see it): object, citing the message or code, only if "
+             "it misstates your position or the evidence, or omits a live disagreement; otherwise output only SLEEP. "
+             "Your reply goes to the drafter only.",
+    "finalize": "FINAL CONCLUSION of #{q}: the others checked your draft. Post the final version for the user in the "
+                "same shape: fix what they showed was misstated or missing; where you still disagree with an "
+                "objection, put it under **Disputed**. Cite only the discussion's messages, not the draft or the "
+                "checks (the user doesn't see those). Do not output SLEEP; no TO: line.",
 }
 
 
@@ -219,9 +225,12 @@ def turn_note(new_msgs):
     con = sorted({m["conclude"] for m in new_msgs if m.get("conclude") and m["from"] == "user"})
     if con:
         s += " " + LENGTH["conclude"].format(q=", #".join(map(str, con)))
-    chk = sorted({m["conclusion"] for m in new_msgs if m.get("conclusion")})
+    chk = sorted({m["conclusion_draft"] for m in new_msgs if m.get("conclusion_draft")})
     if chk:
         s += " " + LENGTH["check"].format(q=", #".join(map(str, chk)))
+    fin = sorted({m["finalize"] for m in new_msgs if m.get("finalize") and m["from"] == "user"})
+    if fin:
+        s += " " + LENGTH["finalize"].format(q=", #".join(map(str, fin)))
     return s + "\n"
 
 
@@ -464,11 +473,27 @@ def _run_agent(name, timeout=1800, do_sync=True):
     sleep_set(name, False)
     extra = None
     con = [m["conclude"] for m in new_msgs if m.get("conclude") and m["from"] == "user"]
-    if con and not asked:   # the drafted conclusion goes to the user and the round's other agents, who check it
+    fin = [m["finalize"] for m in new_msgs if m.get("finalize") and m["from"] == "user"]
+    drafts = [m for m in new_msgs if m.get("conclusion_draft") and m["from"] != name]
+    key = None   # conclusion bookkeeping: (round, state file) to record this reply's id in
+    if fin and not asked:   # the final conclusion, after the others' checks: to the user
+        q = fin[-1]
+        to, extra, re_, zz, key = "user", {"conclusion": q}, [q], False, (q, "final")
+    elif con and not asked:   # the draft goes (hidden) to the round's other served agents, who check it
         q = con[-1]
-        to = ",".join(["user"] + [n for n in members(q) if n != name and n in auto()])
-        extra, re_, zz = {"conclusion": q}, sorted(set(re_) | {q}), False
+        others = [n for n in members(q) if n != name and n in auto()]
+        if others:
+            to, extra, key = ",".join(others), {"conclusion_draft": q, "hidden": True}, (q, "draft")
+        else:   # nobody to check it: it is the conclusion
+            to, extra, key = "user", {"conclusion": q}, (q, "final")
+        re_, zz = sorted(set(re_) | {q}), False
+    elif drafts and not asked:   # an objection to a draft conclusion: to its drafter, hidden like the draft
+        dm = drafts[-1]
+        to, extra, re_ = dm["from"], {"objection": dm["conclusion_draft"], "hidden": True}, sorted(set(re_) | {dm["id"]})
     m = post(name, to, text, hold=asked, re_=re_, extra=extra) if text.strip() else None
+    if m and key:
+        with open(os.path.join(INDEP, str(key[0]), key[1]), "w") as f:
+            f.write(str(m["id"]))
     if msgs:   # read only once the reply is out: a crash before this retries the turn instead of losing it
         seen(name, max(seen(name), msgs[-1]["id"]))
     failure(name, clear=True)

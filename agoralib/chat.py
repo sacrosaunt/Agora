@@ -61,16 +61,21 @@ Pasting several lines posts them as one message."""
 HIST = 200   # messages printed again after a resize
 
 
-def choose(title, options, col):
+def choose(title, options, col=None, ticked=(), empty_ok=False, status=None):
     """A checklist in the terminal: options [(name, note)]; ↑/↓ (or j/k) move, Space (or the item's number) ticks,
-    Enter confirms (the highlighted one when nothing is ticked), Esc or q cancels. Returns the ticked names, [] on
-    cancel. Draws below the cursor and erases itself."""
+    Enter confirms, Esc or q cancels. ticked: names ticked at the start. status(ticked) -> a line shown under the
+    title, redrawn as you tick. Plain: Enter with nothing ticked takes the highlighted one, cancel returns [].
+    empty_ok: Enter returns what is ticked (possibly nothing), cancel returns None. Not in a terminal it returns
+    None at once (callers fall back to typed input). Long lists scroll. Draws below the cursor, erases itself."""
+    col = col or (lambda c, t: f"\033[{c}m{t}\033[0m")
+    if not (sys.stdin.isatty() and sys.stdout.isatty()) or not options:
+        return None
     if WINDOWS:
         import msvcrt
         def key():
             c = msvcrt.getwch()
             if c in ("\x00", "\xe0"):
-                return {"H": "up", "P": "down"}.get(msvcrt.getwch(), "")
+                return {"H": "up", "P": "down", "I": "pgup", "Q": "pgdn"}.get(msvcrt.getwch(), "")
             return c
         restore = lambda: None
     else:
@@ -85,19 +90,28 @@ def choose(title, options, col):
                 if not select.select([fd], [], [], 0.05)[0]:
                     return "\x1b"   # Esc by itself
                 seq = os.read(fd, 8).decode(errors="ignore")
-                return {"[A": "up", "[B": "down", "OA": "up", "OB": "down"}.get(seq[:2], "")
+                return {"[A": "up", "[B": "down", "OA": "up", "OB": "down", "[5": "pgup", "[6": "pgdn"}.get(seq[:2], "")
             return c
-    cur, ticked, drawn = 0, set(), 0
-    w = max(len(n) for n, _ in options)
+    names = [n for n, _ in options]
+    cur, ticked, drawn, top = 0, {n for n in ticked if n in names}, 0, 0
+    w = max(len(n) for n in names)
     try:
         sys.stdout.write("\033[?25l")   # no cursor while picking
         while True:
+            height = max(3, shutil.get_terminal_size((80, 24)).lines - 4 - (1 if status else 0))
+            top = min(max(top, cur - height + 1), cur, max(0, len(options) - height))
             rows = [col("1", title) + col("2", "   ↑↓ move · Space tick · Enter confirm · Esc cancel")]
-            for i, (n, note) in enumerate(options):
+            if status:
+                rows.append(status(set(ticked)))
+            for i in range(top, min(len(options), top + height)):
+                n, note = options[i]
                 mark = "[x]" if n in ticked else "[ ]"
-                line = f"{'›' if i == cur else ' '} {i + 1}. {mark} {n.ljust(w)}  "
+                line = f"{'›' if i == cur else ' '} {str(i + 1).rjust(len(str(len(options))))}. {mark} {n.ljust(w)}  "
                 rows.append((col("1", line) if i == cur else line) + col("2", note))
-            sys.stdout.write((f"\033[{drawn}A" if drawn else "") + "".join("\r\033[K" + r + "\n" for r in rows))
+            if len(options) > height:
+                rows.append(col("2", f"  ({top + 1}-{min(len(options), top + height)} of {len(options)})"))
+            sys.stdout.write((f"\033[{drawn}A" if drawn else "") + "".join("\r\033[K" + r + "\n" for r in rows)
+                             + ("\033[J" if drawn > len(rows) else ""))
             sys.stdout.flush()
             drawn = len(rows)
             k = key()
@@ -105,15 +119,21 @@ def choose(title, options, col):
                 cur = (cur - 1) % len(options)
             elif k in ("down", "j", "\t"):
                 cur = (cur + 1) % len(options)
+            elif k == "pgup":
+                cur = max(0, cur - height)
+            elif k == "pgdn":
+                cur = min(len(options) - 1, cur + height)
             elif k == " ":
-                ticked ^= {options[cur][0]}
+                ticked ^= {names[cur]}
             elif k.isdigit() and 1 <= int(k) <= len(options):
                 cur = int(k) - 1
-                ticked ^= {options[cur][0]}
+                ticked ^= {names[cur]}
             elif k in ("\r", "\n"):
-                return [n for n, _ in options if n in ticked] or [options[cur][0]]
+                if empty_ok:
+                    return [n for n in names if n in ticked]
+                return [n for n in names if n in ticked] or [names[cur]]
             elif k in ("\x1b", "q", "\x03", "\x04"):
-                return []
+                return None if empty_ok else []
     finally:
         restore()
         sys.stdout.write((f"\033[{drawn}A" if drawn else "") + "\r\033[J\033[?25h")
@@ -380,18 +400,20 @@ def chat(to="all", after=None):
         return re.sub(r"(?<![\w@])@(" + "|".join(only or NAMES + ("all",)) + r")\b", hl, out, flags=re.I)
 
     def cites(out):
-        """Inline #N references to messages in the thread: bold and underlined in the cited author's colour."""
+        """Inline #N references to messages in the thread: bold, in the cited author's colour."""
         if not tty or "#" not in out:
             return out
         au = state.setdefault("authors", {})
         def hl(g):
             q = int(g.group(2))
-            if q not in au and q > max(au, default=0):   # newer than any message seen: re-read the thread once
+            # older than what this chat has shown, or newer than any message seen: re-read the thread
+            if q not in au and (not state.get("all_authors") or q > max(au, default=0)):
                 au.update({x["id"]: x["from"] for x in load()})
+                state["all_authors"] = True
             if q not in au:
                 return g.group(0)
             c = COLORS.get(au[q], "37").removeprefix("1;")
-            return f"{g.group(1)}\033[1;4;{c}m#{q}\033[22;24;39m"
+            return f"{g.group(1)}\033[1;{c}m#{q}\033[22;39m"
         # preceded by a start, a non-word character or a colour code (rich styles text right before it)
         return re.sub(r"(^|\x1b\[[0-9;]*m|[^\w#&/])#(\d{1,6})(?!\w)", hl, out, flags=re.M)
 
@@ -402,6 +424,9 @@ def chat(to="all", after=None):
         return head + "\n" + cites(pings(md(m["text"]), [n for n in NAMES + ("all",) if mentioned(m["text"], n)]))
 
     def show(m):
+        if m.get("hidden"):   # agent bookkeeping (a conclusion's ask, draft and checks): the final one shows
+            state.setdefault("hid", set()).add(m["id"])
+            return
         state["hist"].append(m)
         emit(render(m))
 
@@ -474,6 +499,8 @@ def chat(to="all", after=None):
                     continue
                 ids = ", ".join(f"#{i}" for i in r["ids"][-3:])
                 o, n = r["outcome"], r["name"]
+                if r["ids"] and set(r["ids"]) <= state.get("hid", set()) and o in ("slept", "posted"):
+                    continue   # a turn on hidden bookkeeping only (e.g. a check with nothing to object)
                 if o == "slept":
                     emit(col("2", f"{n}: nothing to add ({ids})"))
                 elif o == "held":
@@ -601,7 +628,7 @@ def chat(to="all", after=None):
                         return "" if shutil.which(b) else "its CLI isn't installed here"
                     return ("working now; finishes this turn" if n in state["busy"] else "asleep" if n in zz else "")
                 with lock:
-                    names = choose(("Add to" if add else "Remove from") + " this chat:", [(n, note(n)) for n in pool], col)
+                    names = choose(("Add to" if add else "Remove from") + " this chat:", [(n, note(n)) for n in pool], col) or []
                 if not names:
                     continue
             if not seat(names, add):

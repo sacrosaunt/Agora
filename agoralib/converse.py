@@ -27,7 +27,7 @@ def settle(q, timeout, show=print):
         msgs = load()
         for m in msgs:
             if m["id"] > shown:
-                if m["id"] > q["id"]:
+                if m["id"] > q["id"] and not m.get("hidden"):
                     show(fmt(m))
                 shown = m["id"]
         disc = discussion(q, msgs)
@@ -36,7 +36,7 @@ def settle(q, timeout, show=print):
         # an agent's messages stay unread until its reply is posted, so this also covers turns in progress
         live = [n for n in auto() if any(m["id"] in disc and m["id"] > seen(n) and for_me(m, n) for m in msgs)]
         held = [r for r in open_rounds() if r in disc]
-        held += [r for r in revealed_rounds() if r in disc and conclude_pending(r)]   # its conclusion is still to come
+        held += [r for r in revealed_rounds() if r in disc and conclusion_open(r)]   # its conclusion is still to come
         calm = 0 if live or held else calm + 1
         missing = [n for n in expect if n not in done]
         reason, status = None, None

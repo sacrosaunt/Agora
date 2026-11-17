@@ -182,6 +182,16 @@ def serve_loop(a):
                           + (f"conclusion asked of {c['to'][0]} (#{c['id']})" if c else "too few answers to conclude"),
                           flush=True)
                     msgs = load()
+            elif conclusion_state(q, "draft") and not conclusion_state(q, "final") and idle \
+                    and not os.path.exists(halted) and settled(int(conclusion_state(q, "draft")), msgs):
+                calm[q] = calm.get(q, 0) + 1   # the draft's checks are in: post it, or ask for the final version
+                if calm[q] >= 2:
+                    c = finish_conclusion(q, msgs)
+                    print(f"{time.strftime('%H:%M:%S')} round #{q} conclusion checked; "
+                          + ("posted" if c and c.get("conclusion") else "final version asked" if c else "draft lost"),
+                          flush=True)
+                    calm.pop(q, None)
+                    msgs = load()
             else:
                 calm.pop(q, None)
         todo = []
@@ -218,7 +228,8 @@ def serve_loop(a):
                 print(f"{time.strftime('%H:%M:%S')} {name} replying to {[m['id'] for m in pend]}", flush=True)
                 busy(name, True)
                 busy_task(name, "drafting the conclusion" if any(m.get("conclude") for m in pend)
-                          else "checking the conclusion" if any(m.get("conclusion") for m in pend) else None)
+                          else "finalizing the conclusion" if any(m.get("finalize") for m in pend)
+                          else "checking the conclusion" if any(m.get("conclusion_draft") for m in pend) else None)
                 with wlock:
                     working.add(name)
                 threading.Thread(target=turn, args=(name, [m["id"] for m in pend]), daemon=True).start()

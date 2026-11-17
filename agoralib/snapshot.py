@@ -16,18 +16,24 @@ def sync():
 
 
 def excluded(rel, pats):
-    """rel (a /-separated path) is left out by pats. A glob (*, ?, [) matches the whole path or any one component;
-    a SECRETS name matches any component; other patterns are path prefixes (data/, runs/). A trailing / means a
-    directory."""
+    """rel (a /-separated path) is left out by pats. A glob (*, ?, [) matches the whole path or any one component
+    (a leading **/ means at any depth: **/build/); a SECRETS name matches any component; other patterns are rooted
+    paths matched by whole components (data drops data and data/..., not database.py). A trailing / means a
+    directory only."""
     from fnmatch import fnmatch
     parts = rel.split("/")
     for p in pats:
         name, d = p.rstrip("/"), p.endswith("/")
         comps = parts[:-1] if d else parts
         if any(c in p for c in "*?["):
-            if fnmatch(rel, name) or any(fnmatch(c, name) for c in comps):
+            bare = name[3:] if name.startswith("**/") else name
+            if fnmatch(rel, name) or any(fnmatch(c, bare) for c in comps) \
+                    or "/" in bare and any(fnmatch("/".join(parts[i:i + bare.count("/") + 1]), bare)
+                                           for i in range(len(comps) - bare.count("/"))):
                 return True
-        elif p in SECRETS and name in comps or rel.startswith(p):
+        elif p in SECRETS and name in comps:
+            return True
+        elif rel.startswith(name.lstrip("/") + "/") or not d and rel == name.lstrip("/"):
             return True
     return False
 

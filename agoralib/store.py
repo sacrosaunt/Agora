@@ -25,6 +25,10 @@ def tag(m):
         return re_ + f" ◆ independent answer to #{m['independent']}"
     if m.get("conclusion"):
         return re_ + f" ◆ conclusion of #{m['conclusion']}"
+    if m.get("conclusion_draft"):
+        return re_ + f" ◆ draft conclusion of #{m['conclusion_draft']} (agents only)"
+    if m.get("objection"):
+        return re_ + f" ◆ check of the draft conclusion of #{m['objection']} (agents only)"
     return re_ + {"independent": " ◆ independent", "audit": " ◆ audit", "design": " ◆ design",
                   "decision": " ◆ decision", "conclude": " ◆ conclude"}.get(m.get("mode"), "")
 
@@ -54,6 +58,8 @@ def render(msgs):
     if decisions(msgs):
         out.append("\n" + decisions_text(msgs))
     for m in msgs:
+        if m.get("hidden"):   # agent-only bookkeeping (a conclusion's trigger, draft and checks): not for the user
+            continue
         out.append(f"\n---\n### #{m['id']} {author(m)} → {', '.join(m['to'])}{tag(m)} · {m['ts']}\n\n{m['text'].rstrip()}\n")
     tmp = tmpname(MD)
     with open(tmp, "w") as f:
@@ -144,7 +150,7 @@ SLEEP = os.path.join(STATE, "sleep")  # <name>.json while an agent sleeps: it sk
 def pinged(m, name):
     """Addressed to name by name (-t name), mentioning @name anywhere in the text, the user mentioning @all, or
     a user question opening an independent round (everyone answers it)."""
-    if m["from"] == name:
+    if m["from"] == name or m.get("objection"):   # an objection to a draft conclusion waits for finish_conclusion
         return False
     if name in m["to"] or mentioned(m["text"], name):
         return True
@@ -209,6 +215,8 @@ def take_turns(mid):
 def for_me(m, name):
     """Pings always count. A sleeper waiting for someone (WAIT: codex) wakes on that one's next message,
     whoever it is addressed to; otherwise sleepers skip messages to all."""
+    if m.get("objection") or m.get("hidden") and name not in m["to"]:
+        return False   # agent bookkeeping reaches only its addressees; objections wait for finish_conclusion
     if pinged(m, name):
         return True
     z = asleep(name)
@@ -365,9 +373,25 @@ def settled(q, msgs, working=()):
     return not working and not any(m["id"] in disc and m["id"] > seen(n) and for_me(m, n) for n in auto() for m in msgs)
 
 
+def conclusion_state(q, key):
+    try:
+        return open(os.path.join(INDEP, str(q), key)).read().strip()
+    except OSError:
+        return None
+
+
+def conclusion_open(q):
+    """Round q's conclusion is still to come: not asked for yet, or drafted / being checked / being finalized."""
+    if conclude_pending(q):
+        return True
+    who = conclusion_state(q, "conclude")
+    return bool(who) and who in AGENTS and not conclusion_state(q, "final")
+
+
 def ask_conclusion(q, msgs):
-    """Ask one agent of round q to draft its conclusion (agreed, disputed, next step), addressed so the others then
-    check it. Rotates over the round's served members by round id. Skips rounds with fewer than two answers."""
+    """Ask one agent of round q to draft its conclusion (agreed, disputed, next step). The ask, the draft and the
+    others' checks are hidden from the user (agent bookkeeping); only the final conclusion is shown. Rotates over
+    the round's served members by round id. Skips rounds with fewer than two answers."""
     d = os.path.join(INDEP, str(q))
     answered = [m["from"] for m in msgs if m.get("independent") == q]
     able = [n for n in members(q) if n in auto() and (asleep(n) or {}).get("why") != "user" and not failure(n)]
@@ -376,8 +400,30 @@ def ask_conclusion(q, msgs):
         return None
     drafter = able[q % len(able)]
     open(os.path.join(d, "conclude"), "w").write(drafter)   # first: a crash never asks twice
-    return post("user", drafter, f"@{drafter}: the discussion of #{q} has settled. Draft its conclusion for the user; "
-                "the others will check it.", via="agora", mode="conclude", extra={"conclude": q}, re_=[q])
+    return post("user", drafter, f"@{drafter}: the discussion of #{q} has settled. Draft its conclusion; the others "
+                "will check it before the user sees it.", via="agora", mode="conclude",
+                extra={"conclude": q, "hidden": True}, re_=[q])
+
+
+def finish_conclusion(q, msgs):
+    """Round q's draft conclusion has been checked (its discussion went quiet). No objections: the draft is posted
+    to the user as the conclusion. Objections: the drafter is asked (hidden) for the final version."""
+    d = os.path.join(INDEP, str(q))
+    drafter, draft = conclusion_state(q, "conclude"), int(conclusion_state(q, "draft") or 0)
+    dm = next((m for m in msgs if m["id"] == draft), None)
+    if not dm:
+        open(os.path.join(d, "final"), "w").write("lost")
+        return None
+    obj = [m for m in msgs if m.get("objection") == q and m["from"] != drafter]
+    if not obj:
+        m = post(drafter, "user", dm["text"], extra={"conclusion": q}, re_=[q])
+        open(os.path.join(d, "final"), "w").write(str(m["id"]))
+        return m
+    open(os.path.join(d, "final"), "w").write("asked")
+    ids = ", ".join("#%d" % m["id"] for m in obj)
+    return post("user", drafter, f"@{drafter}: {ids} checked your draft #{draft} "
+                f"of #{q}'s conclusion. Post the final conclusion for the user.", via="agora",
+                extra={"finalize": q, "draft": draft, "hidden": True}, re_=[draft] + [m["id"] for m in obj])
 
 
 TURNS = os.path.join(STATE, "turns.jsonl")  # one line per agent turn: who, which messages, what came of it
@@ -492,6 +538,9 @@ def stop_all():
     for q in revealed_rounds():
         if conclude_pending(q):
             with open(os.path.join(INDEP, str(q), "conclude"), "w") as f:
+                f.write("stopped")
+        elif conclusion_open(q):   # drafted or being checked: no final version comes
+            with open(os.path.join(INDEP, str(q), "final"), "w") as f:
                 f.write("stopped")
     return [n for n in AGENTS if stop_turn(n, "quiet")]
 
