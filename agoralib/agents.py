@@ -250,8 +250,10 @@ def codex_perms():
     fs = {CODE: "read", MD: "read", STATE: "deny"}
     if ALSO:
         fs[ALSO_DIR] = "read"
-    if SRC:
-        fs[SRC] = "deny"   # the live tree: agents read the snapshot
+    home = os.path.join(INSTALL, ".codex-home")
+    if SRC and os.path.commonpath([os.path.abspath(SRC), home]) != os.path.abspath(SRC):
+        fs[SRC] = "deny"   # the live tree: agents read the snapshot (not when it holds Codex's own home, which
+                           # the sandbox must mount: agora's thread about itself)
     return ["-c", f"permissions.{m.group(1)}.filesystem={{" + ", ".join(f"{json.dumps(k)}={json.dumps(v)}"
                                                                        for k, v in fs.items()) + "}"]
 

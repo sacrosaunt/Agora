@@ -62,7 +62,7 @@ def chat(to="all", after=None):
     col = (lambda c, t: f"\033[{c}m{t}\033[0m") if tty else (lambda c, t: t)
     state = {"to": to, "last": after if after is not None else (load()[-1]["id"] if load() else 0),
              "busy": {}, "stop": False, "mine": set(), "hist": [], "shown": False, "frame": 0, "reading": False, "posting": False,
-             "toff": os.path.getsize(TURNS) if os.path.exists(TURNS) else 0}
+             "toff": os.path.getsize(TURNS) if os.path.exists(TURNS) else 0, "members": round_members()}
     lock = threading.Lock()
 
     def plain_prompt():
@@ -118,8 +118,27 @@ def chat(to="all", after=None):
         return ("💤 " + ", ".join(n + (f" (waits for {', '.join(w)})" if w else "") for n, w in sorted(zz.items()))
                 if zz else "")
 
+    def seated():
+        """Who is in this chat: the served agents, any agent run by hand that was active lately, and anyone asleep."""
+        return [n for n in AGENTS if n in (state.get("members") or ()) or n in (state.get("zz") or {})]
+
+    def members_text():
+        """The idle status line's roll call: each agent in its colour, a sleeping one dim with 💤 (and on whom it
+        waits). Plain text (with its visible width) when colour is off."""
+        zz, parts = state.get("zz") or {}, []
+        for n in seated():
+            if n in zz:
+                w = f" (waits for {', '.join(zz[n])})" if zz[n] else ""
+                parts.append((col("2", f"{n} 💤{w}"), len(n) + 3 + len(w)))
+            else:
+                parts.append((col(COLORS.get(n, "0"), n), len(n)))
+        if not parts:
+            return "", 0
+        head = "in this chat: "
+        return col("2", head) + col("2", " · ").join(p for p, _ in parts), len(head) + sum(w for _, w in parts) + 3 * (len(parts) - 1)
+
     def has_line():
-        return tty and bool(state["busy"] or state.get("zz") or state.get("notes"))
+        return tty and bool(state["busy"] or state.get("zz") or state.get("notes") or state.get("members"))
 
     def notes_text():
         return "  ".join(state.get("notes") or [])
@@ -129,8 +148,11 @@ def chat(to="all", after=None):
         width = shutil.get_terminal_size().columns - 1
         nt = notes_text()
         if not state["busy"]:
-            z = "  ".join(x for x in (nt, zz_text()) if x)
-            return col("33" if nt else "2", clip(z, width))
+            who, ww = members_text()
+            if not nt:
+                return who if ww <= width else col("2", clip(zz_text() or "", width))
+            out = col("33", clip(nt, width))
+            return out + ("  " + who if who and vwidth(nt) + 2 + ww <= width else "")
         out, used = col("2", SPIN[state["frame"] % len(SPIN)]), 1
         for n, a in state["busy"].items():
             room = width - used - len(n) - 5
@@ -276,6 +298,7 @@ def chat(to="all", after=None):
                     if m["id"] not in state["mine"]:  # your own lines are already on screen
                         show(m)
             state["busy"] = busy_now()
+            state["members"] = round_members()
             notes = []
             for q in open_rounds():
                 notes.append(f"◆ #{q} independent: {len(round_status(q))}/{len(round_members())} in")
@@ -323,6 +346,8 @@ def chat(to="all", after=None):
             time.sleep(0.5)
 
     print(col("2", "Type a message and press Enter to post it to all. /help lists the commands; /quit leaves."))
+    if not tty and state["members"]:   # a terminal shows the roll call in the status line instead
+        print("In this chat: " + ", ".join(state["members"]))
     if not tty and any(asleep(n) for n in AGENTS):
         print(sleep_summary({n for n in AGENTS if asleep(n)}))
     if after is not None:
