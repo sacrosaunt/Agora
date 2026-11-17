@@ -534,6 +534,8 @@ def chat(to="all", after=None):
                     got = prev[1] + [i for i in r["ids"] if i not in prev[1]] if same else list(r["ids"])
                     emit(col("2", f"{n}: nothing to add ({', '.join(f'#{i}' for i in got[-4:])})"), again=same)
                     state["slept"] = (n, got)
+                elif o == "approved":
+                    emit(col("2", f"{n} approved the conclusion of #{r['note']}"))
                 elif o == "held":
                     emit(col("2", f"{n} answered ({r['note']}; held until all are in)"))
                 elif o == "failed":

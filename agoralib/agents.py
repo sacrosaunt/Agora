@@ -502,7 +502,8 @@ def _run_agent(name, timeout=1800, do_sync=True):
         return m
     for q in asked:   # slept without answering an independent round it was asked: don't wait for it
         hold_outcome(q, name, slept=True)
-    log_turn(name, new, "posted" if m else "slept", msg=m and m["id"])
+    log_turn(name, new, "posted" if m else "approved" if drafts else "slept", msg=m and m["id"],
+             note=str(drafts[-1]["conclusion_draft"]) if drafts and not m else "")   # no objection to a draft: approved
     if zz:
         sleep_set(name, True, why="waiting for " + ",".join(wf) if wf else "nothing to add", until_from=wf)
         # no deadlock: whoever waits on name gets the turn if name waits on them (e.g. name was the lead) or if

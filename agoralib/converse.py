@@ -32,7 +32,7 @@ def settle(q, timeout, show=print):
                 shown = m["id"]
         disc = discussion(q, msgs)
         rows = [r for r in turns_since(t0 - 5) if set(r["ids"]) & disc]
-        done = {r["name"] for r in rows if r["outcome"] in ("posted", "slept", "held", "gave up", "stopped")}
+        done = {r["name"] for r in rows if r["outcome"] in ("posted", "slept", "approved", "held", "gave up", "stopped")}
         # an agent's messages stay unread until its reply is posted, so this also covers turns in progress
         live = [n for n in auto() if any(m["id"] in disc and m["id"] > seen(n) and for_me(m, n) for m in msgs)]
         held = [r for r in open_rounds() if r in disc]

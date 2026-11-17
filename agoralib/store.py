@@ -150,8 +150,8 @@ SLEEP = os.path.join(STATE, "sleep")  # <name>.json while an agent sleeps: it sk
 def pinged(m, name):
     """Addressed to name by name (-t name), mentioning @name anywhere in the text, the user mentioning @all, or
     a user question opening an independent round (everyone answers it)."""
-    if m["from"] == name or m.get("objection"):   # an objection to a draft conclusion waits for finish_conclusion
-        return False
+    if m["from"] == name or m.get("objection") or m.get("conclusion"):
+        return False   # an objection waits for finish_conclusion; the final conclusion is for the user, not a prompt
     if name in m["to"] or mentioned(m["text"], name):
         return True
     return m["from"] == "user" and name in AGENTS and m.get("mode") != "decision" and (
@@ -215,8 +215,8 @@ def take_turns(mid):
 def for_me(m, name):
     """Pings always count. A sleeper waiting for someone (WAIT: codex) wakes on that one's next message,
     whoever it is addressed to; otherwise sleepers skip messages to all."""
-    if m.get("objection") or m.get("hidden") and name not in m["to"]:
-        return False   # agent bookkeeping reaches only its addressees; objections wait for finish_conclusion
+    if m.get("objection") or m.get("conclusion") or m.get("hidden") and name not in m["to"]:
+        return False   # bookkeeping reaches only its addressees; objections wait; nobody replies to a conclusion
     if pinged(m, name):
         return True
     z = asleep(name)
