@@ -47,6 +47,9 @@ HELP = """@name,name at the start   address it (sticky); @name inside a message 
 /quit or Ctrl-D           leave (// at the start posts a line beginning with / as text)"""
 
 
+HIST = 200   # messages printed again after a resize
+
+
 def chat(to="all", after=None):
     """Live view: prints every new message as it lands and reads your replies from the prompt."""
     ensure_serve()
@@ -58,7 +61,7 @@ def chat(to="all", after=None):
     tty = ansi_terminal()
     col = (lambda c, t: f"\033[{c}m{t}\033[0m") if tty else (lambda c, t: t)
     state = {"to": to, "last": after if after is not None else (load()[-1]["id"] if load() else 0),
-             "busy": {}, "stop": False, "mine": set(), "shown": False, "frame": 0, "reading": False, "posting": False,
+             "busy": {}, "stop": False, "mine": set(), "hist": [], "shown": False, "frame": 0, "reading": False, "posting": False,
              "toff": os.path.getsize(TURNS) if os.path.exists(TURNS) else 0}
     lock = threading.Lock()
 
@@ -185,9 +188,17 @@ def chat(to="all", after=None):
         sys.stdout.flush()
 
     def animate():
+        size, since = shutil.get_terminal_size().columns, None
         while not state["stop"]:
             time.sleep(0.05)
             if not tty:
+                continue
+            c = shutil.get_terminal_size().columns
+            if c != size:   # wait until the resize settles (dragging fires many), then lay everything out again
+                size, since = c, time.time()
+            elif since and time.time() - since > 0.3:
+                since = None
+                redraw()
                 continue
             with lock:
                 paint_input()
@@ -218,22 +229,40 @@ def chat(to="all", after=None):
             return f"\033[1;{c}m{g.group(0)}\033[22;39m"
         return re.sub(r"(?<![\w@])@(" + "|".join(NAMES + ("all",)) + r")\b", hl, out, flags=re.I)
 
-    def show(m):
+    def render(m):
         head = (col(COLORS.get(m["from"], "0"), f"── #{m['id']} {author(m)}") + col("2", f" → {', '.join(m['to'])}")
                 + col("35", tag(m)) + col("2", f" · {hhmm(m['ts'])}"))
-        emit(head + "\n" + pings(md(m["text"])))
+        return head + "\n" + pings(md(m["text"]))
+
+    def show(m):
+        state["hist"].append(m)
+        emit(render(m))
+
+    def redraw():
+        """After a resize: clear the screen and scrollback and print the messages shown so far again at the new
+        width (the terminal's own re-wrap of lines laid out for the old width breaks words and indents)."""
+        with lock:
+            buf = line_buffer()
+            out = "\033[H\033[2J\033[3J" + "".join(render(m) + "\n" for m in state["hist"][-HIST:])
+            state["shown"] = has_line()
+            if state["shown"]:
+                out += typing_line() + "\n"
+            write_then_prompt(out, buf)
+            sys.stdout.flush()
 
     def md(text):
         if not tty:
             return text.rstrip() + "\n"
+        width = min(shutil.get_terminal_size().columns, 110)
         try:
             import io
             from rich.console import Console
             from rich.markdown import Markdown
             buf = io.StringIO()
-            Console(file=buf, force_terminal=True, width=min(shutil.get_terminal_size().columns, 110)).print(
+            Console(file=buf, force_terminal=True, width=width).print(
                 Markdown(text, code_theme="ansi_dark", hyperlinks=False))
-            return buf.getvalue().rstrip() + "\n"
+            # rich pads every line to the full width; a narrower window would wrap that padding into blank rows
+            return re.sub(r"[ \t]+((?:\x1b\[[0-9;]*m)*)$", r"\1", buf.getvalue().rstrip(), flags=re.M) + "\n"
         except Exception:
             return text.rstrip() + "\n"
 
@@ -416,6 +445,7 @@ def chat(to="all", after=None):
             show(m)
         else:
             state["mine"].add(m["id"])
+            state["hist"].append(m)
             emit(col("2", f"posted #{m['id']}"))
         state["posting"] = False
     state["stop"] = True
