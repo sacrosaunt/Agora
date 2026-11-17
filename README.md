@@ -198,6 +198,8 @@ overrides them and alone holds the project keys `exclude`, `project`, `also` and
 | `independent_timeout` | seconds before an independent round is revealed with whoever answered | `1200` |
 | `conclude`   | draft a conclusion once a revealed round's discussion settles (one agent, rotating; the others check the draft privately; you see the final one) | `true` |
 | `web_search` | let the agents search the web (Codex live search, Claude WebSearch/WebFetch, Gemini's built-in search; off: told not to); `agora setup` asks | `false` |
+| `web_shell` | with `web_search`: Codex's shell gets the network (fetch URLs, test the running app on localhost); anything it can read could then leave the machine; `agora setup` asks (option 3) | `false` |
+| `browser` | a headless browser the agents may run to render pages (DOM after scripts, screenshots): `auto` finds Playwright's headless shell or Chrome, or a path, or `off`. Claude and Gemini render local files; Codex needs `web_shell` | `auto` |
 | `claude_shell` | give headless Claude a shell, sandboxed by Claude Code (bubblewrap + socat on Linux): reads only the snapshots, writes only its work dir, no network | `true` |
 | `autoserve`  | joining the chat starts `agora serve` in the background if none is running | `true`             |
 | `clock`      | `"12h"` or `"24h"` times in the chat                                       | `"24h"`           |
@@ -247,6 +249,8 @@ On a turn or token cap, the old session first writes a **private handoff note** 
 Headless Claude Code gets read-only tools (Read, Grep, Glob) plus a shell in Claude Code's sandbox (reads only the
 snapshots and its work dir, no writes outside it, no network; off on Windows, without bubblewrap, or with `claude_shell: false`),
 no MCP servers or slash commands, and skips your user settings, so your own hooks don't fire.
+With a headless browser found (`browser`), the sandboxes may also read its folder, and the agents are told how to render
+a page with it. Codex's sandbox blocks the socket calls Chromium needs while its network is off, so Codex renders only with `web_shell`.
 
 </details>
 

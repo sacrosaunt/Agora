@@ -247,7 +247,7 @@ def setup(models=False):
     found = [n for n in AGENTS if shutil.which({"claude": CLAUDE, "codex": "codex", "gemini": AGY}[n])]
     home = os.path.join(INSTALL, ".codex-home")   # agora's own Codex home: your ~/.codex stays untouched
     login = "codex" in found and shutil.which("codex") and not os.path.exists(os.path.join(home, "auth.json"))
-    names = (["Snapshot"] if SRC else []) + ["Agents", "Models", "Web search"] + (
+    names = (["Snapshot"] if SRC else []) + ["Agents", "Models", "Web access", "Browser"] + (
         [] if WS == INSTALL else ["Defaults"]) + (["Codex login"] if login else [])
     with Steps(f"Setting up agora for {SRC or 'a discussion without code'}", names) as st:
         if SRC:   # 1. excludes
@@ -287,11 +287,35 @@ def setup(models=False):
             st.record("; ".join(got))
         elif inst["serve"]:
             st.record("each CLI's default" if not any(opt(n, "model") for n in inst["serve"]) else "unchanged")
-        st.show("Web search")
-        inst["web_search"] = ask("Let the agents search the web (docs, papers, release notes)? Queries go to the "
-                                 f"agents' web services. [{'Y/n' if web_on() else 'y/N'}]",
-                                 "y" if web_on() else "n").lower().startswith("y")
-        st.record("on" if inst["web_search"] else "off")
+        st.show("Web access")
+        now = "3" if web_shell() else "2" if web_on() else "1"
+        print("What may the agents reach on the web?\n"
+              "  1. nothing: they work from the code and the thread\n"
+              "  2. search: the agents' own web search and page fetch tools (queries go to their web services)\n"
+              "  3. search, and a shell with network for Codex: it can fetch URLs and test the running app on\n"
+              "     localhost. Anything it can read (code, thread) could then leave the machine, and a page it\n"
+              "     fetches could try to talk it into that. (Claude's and Gemini's shells stay offline.)\n")
+        r = ask(f"1, 2 or 3? [{now}]", now).strip()
+        r = r if r in ("1", "2", "3") else now
+        inst["web_search"], inst["web_shell"] = r != "1", r == "3"
+        st.record({"1": "off", "2": "search", "3": "search + Codex shell network"}[r])
+        st.show("Browser")
+        b = find_browser()
+        if b:
+            on = _on(CFG.get("browser", "auto"))
+            print(f"Found a headless browser: {b}\nWith it the agents can render a page (the DOM after its scripts, or a "
+                  "screenshot) instead of guessing from the code. Claude and Gemini render local files; Codex local files"
+                  " and servers on localhost, only with option 3"
+                  " above.\n")
+            inst["browser"] = "auto" if ask(f"Let the agents use it? [{'Y/n' if on else 'y/N'}]",
+                                            "y" if on else "n").lower().startswith("y") else "off"
+            st.record("on" if inst["browser"] == "auto" else "off")
+        else:
+            print("No headless browser found. To let the agents render pages, install one, e.g.\n"
+                  "  npx playwright install chromium-headless-shell\n"
+                  "(or Google Chrome), then run `agora setup` again.")
+            ask("Press Enter to go on.")
+            st.record("none found")
         if WS == INSTALL:
             save_cfg(ICONFIG, inst)
             where_to = f"saved in {ICONFIG}"
