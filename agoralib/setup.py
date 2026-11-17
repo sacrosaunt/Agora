@@ -290,10 +290,10 @@ def setup(models=False):
         st.show("Web access")
         now = "3" if web_shell() else "2" if web_on() else "1"
         print("What can the agents reach online?\n\n"
-              "  1  Nothing     code and thread only\n"
-              "  2  Search      their built-in web search\n"
-              "  3  + Network   Codex can also open URLs and your running app.\n"
-              "                 Risk: a bad page could trick it into sending out your code.\n")
+              "  1  Nothing   they work from the code and the thread only\n"
+              "  2  Search    they can use their own web search\n"
+              "  3  Network   search, and Codex can also open URLs and your running app\n"
+              "               (risk: a malicious page could trick it into sending out your code)\n")
         r = ask(f"Choose 1-3 [{now}]", now).strip()
         r = r if r in ("1", "2", "3") else now
         inst["web_search"], inst["web_shell"] = r != "1", r == "3"
@@ -302,15 +302,19 @@ def setup(models=False):
         b = find_browser()
         if b:
             on = _on(CFG.get("browser", "auto"))
-            print(f"Let the agents open pages in a headless browser to see what they really show?\n"
-                  f"  found: {b}\n  (Codex needs option 3 above; the others open local files only.)\n")
+            who = [n for n in inst["serve"] if n != "codex"]
+            rows = ([f"  {', '.join(n.capitalize() for n in who):<16} local files"] if who else []) + (
+                ["  Codex            " + ("local files and your running app" if r == "3"
+                                          else "can't: needs option 3 in Web access")] if "codex" in inst["serve"] else [])
+            print("Let the agents open pages in a headless browser, to check what a page actually shows?\n\n"
+                  + "\n".join(rows) + f"\n\n  using {b}\n")
             inst["browser"] = "auto" if ask(f"[{'Y/n' if on else 'y/N'}]",
                                             "y" if on else "n").lower().startswith("y") else "off"
             st.record("on" if inst["browser"] == "auto" else "off")
         else:
-            print("No headless browser found. To let the agents render pages, install one, e.g.\n"
-                  "  npx playwright install chromium-headless-shell\n"
-                  "(or Google Chrome), then run `agora setup` again.")
+            print("No headless browser found, so the agents can't open pages.\n\n"
+                  "To add one:  npx playwright install chromium-headless-shell\n"
+                  "(or install Google Chrome), then run `agora setup` again.\n")
             ask("Press Enter to go on.")
             st.record("none found")
         if WS == INSTALL:
