@@ -67,7 +67,7 @@ def render(msgs):
     replace(tmp, MD)
 
 
-PING = re.compile(r"(?<![\w@])@(" + "|".join(AGENTS) + r"|all)\b", re.I)
+PING = re.compile(r"(?<![\w@])@(" + "|".join(sorted(AGENTS, key=len, reverse=True)) + r"|all)(?![\w-])", re.I)
 MODES = ("short", "audit", "design", "independent", "decision", "conclude")
 INDEP = os.path.join(STATE, "independent")  # <qid>/<agent>.json: answers held until the round is revealed
 
@@ -131,7 +131,7 @@ def post(frm, to, text, via=None, mode=None, extra=None, hold=(), re_=()):
 
 
 def PING_ONE(name):
-    return re.compile(r"(?<![\w@])@" + name + r"\b", re.I)
+    return re.compile(r"(?<![\w@])@" + re.escape(name) + r"(?![\w-])", re.I)
 
 
 def uncode(text):
@@ -579,6 +579,12 @@ def give_up(name, f):
 
 
 COLORS = {"user": "1;37", "claude": "38;5;209", "codex": "38;5;114", "gemini": "38;5;75"}
+SHADES = {"claude": ("38;5;216", "38;5;173", "38;5;223"), "codex": ("38;5;150", "38;5;72", "38;5;193"),
+          "gemini": ("38;5;111", "38;5;69", "38;5;153")}   # more seats of a family: shades of its colour
+for _n in AGENTS:
+    if _n not in COLORS:
+        _k = sum(1 for x in COLORS if family(x) == family(_n)) - 1
+        COLORS[_n] = SHADES[family(_n)][_k % 3]
 ACT = os.path.join(STATE, "activity")  # <name>.json per agent working on a reply: phase + running actions
 
 

@@ -209,12 +209,12 @@ def can_browse(name):
     """name's shell can run the browser: claude's sandbox once it may read it; codex's only with the network on
     (offline its sandbox blocks the socket calls Chromium makes between its own processes); gemini's renders local
     files but can't reach localhost."""
-    return bool(browser()) and can_shell(name) and (name != "codex" or web_shell())
+    return bool(browser()) and can_shell(name) and (family(name) != "codex" or web_shell())
 
 
 def web_block(name, work):
     """The agents' web rules as one short block: search, shell network, browser."""
-    net = name == "codex" and web_shell()
+    net = family(name) == "codex" and web_shell()
     rows = ["Search: use your web search tool when it helps; cite the URLs you rely on." if web_on() else "Search: off; don't search or fetch URLs."]
     if net:
         rows.append("Network: your shell can fetch URLs and reach servers on localhost (e.g. the running app). "
@@ -241,13 +241,14 @@ def rules(name):
             "addressed to you). If you have nothing worth adding, output only `SLEEP`: nothing is posted and you "
             "stop answering messages to all until someone pings you (`@" + name + "` or addresses you by name). "
             "A first line `SLEEP` before a message posts it and then sleeps. To hold off until a specific "
-            "participant has replied (e.g. you asked codex to check something), use a first line `WAIT: codex` "
-            "(with or without a message after it): you skip everything until codex posts, then get a turn. "
+            "participant has replied (e.g. you asked another agent to check something), use a first line "
+            "`WAIT: <name>` (with or without a message after it): you skip everything until that one posts, then get "
+            "a turn. "
             "Sleeping is automatic too: after a message addressed only to other agents you wait for their answer; "
             "a ping or the user writing to all wakes you. Questions to all are answered by one agent first; if "
             "another agent has already answered what you were asked, reply only with a correction or something "
             "new, otherwise output only `SLEEP`.\n\n"
-            "To point at a specific earlier message, cite it inline as #N (e.g. `as codex showed in #42`); the "
+            "To point at a specific earlier message, cite it inline as #N (e.g. `as shown in #42`); the "
             "chat highlights it.\n\n"
             "EVIDENCE (rules 1-2): cite path:line for claims about the code and say what you didn't check; check "
             "another agent's claim in the code before agreeing with it.\n\n"
@@ -328,23 +329,29 @@ def snapshot_head():
 
 
 def opt(name, key, default=None):
-    """Per-agent setting: env AGORA_<NAME>_<KEY>, else "<name>_<key>" in agora.json, else default."""
-    return os.environ.get(f"AGORA_{name.upper()}_{key.upper()}") or CFG.get(f"{name}_{key}") or default
+    """Per-seat setting: env AGORA_<NAME>_<KEY>, else the seat's own entry in "seats", else "<name>_<key>" in
+    agora.json; an extra seat then falls back to its family's setting, except for the model; else default."""
+    env = f"AGORA_{re.sub(r'[^A-Z0-9]', '_', name.upper())}_{key.upper()}"
+    fam = family(name)
+    return (os.environ.get(env) or SEATS.get(name, {}).get(key) or CFG.get(f"{name}_{key}")
+            or (fam != name and key != "model" and (os.environ.get(f"AGORA_{fam.upper()}_{key.upper()}")
+                                                     or CFG.get(f"{fam}_{key}"))) or default)
 
 
 def agent_cmd(name, sid, work, out):
     """The CLI command for one turn of name: fresh when sid is None, else resuming session sid.
     Returns (cmd, prompt_on_stdin)."""
-    if name == "codex":  # codex exec resume has no -C: the cwd (work) is the workspace either way
+    fam = family(name)
+    if fam == "codex":  # codex exec resume has no -C: the cwd (work) is the workspace either way
         base = ["codex", "exec"] + (["resume"] if sid else []) + ["--json", "--skip-git-repo-check"]
         return base + ([] if sid else ["-C", work]) + [
-            "-c", "model_reasoning_effort=" + opt("codex", "effort", "medium")] + (
-            ["-c", "model=" + json.dumps(opt("codex", "model"))] if opt("codex", "model") else []) + [
+            "-c", "model_reasoning_effort=" + opt(name, "effort", "medium")] + (
+            ["-c", "model=" + json.dumps(opt(name, "model"))] if opt(name, "model") else []) + [
             "-o", out] + (["-c", 'web_search="live"'] if web_on() else ["-c", 'web_search="disabled"']) + codex_perms() + (   # Windows: without a sandbox codex rejects every shell command
             ["-c", 'windows.sandbox="unelevated"'] if WINDOWS and not codex_has("windows") else []) + (
             [sid] if sid else []) + ["-"], True
-    if name == "gemini":  # Antigravity print mode: workspace = code snapshot + work dir; approvals auto-denied
-        return [AGY, "--model", opt("gemini", "model", "gemini-4-hydrogen-high"),
+    if fam == "gemini":  # Antigravity print mode: workspace = code snapshot + work dir; approvals auto-denied
+        return [AGY, "--model", opt(name, "model", "gemini-4-hydrogen-high"),
                 "--add-dir", CODE] + (["--add-dir", ALSO_DIR] if ALSO else []) + [
                 "--input-format", "stream-json", "--output-format", "stream-json"] + (
                 ["--conversation", sid] if sid else []) + ["-p="], True   # prompt on stdin, not in argv
@@ -357,8 +364,8 @@ def agent_cmd(name, sid, work, out):
            ["Bash", "--settings", json.dumps(shell)] if shell else []) + (
            ["--allowedTools", "WebSearch", "WebFetch"] if web_on() else [])   # print mode denies them unless allowed
     for key in ("model", "effort"):
-        if opt("claude", key):
-            cmd += ["--" + key, opt("claude", key)]
+        if opt(name, key):
+            cmd += ["--" + key, opt(name, key)]
     return cmd + (["--resume", sid] if sid else []), True
 
 
@@ -383,14 +390,14 @@ def codex_perms():
         return []
     fs = {}
     if WS != INSTALL:   # the legacy layout's paths are in the profile already
-        fs = {CODE: "read", MD: "read", STATE: "deny"}
+        fs = {CODE: "read", STATE: "deny", **({MD: "deny"} if ANON else {MD: "read"})}   # thread.md has the real names
         if ALSO:
             fs[ALSO_DIR] = "read"
         home = os.path.join(INSTALL, ".codex-home")
         if SRC and os.path.commonpath([os.path.abspath(SRC), home]) != os.path.abspath(SRC):
             fs[SRC] = "deny"   # the live tree: agents read the snapshot (not when it holds Codex's own home, which
                                # the sandbox must mount: agora's thread about itself)
-    if can_browse("codex"):
+    if any(family(n) == "codex" and can_browse(n) for n in AGENTS):
         fs[browser_dir(browser())] = "read"
     out = ["-c", f"permissions.{m.group(1)}.filesystem={{" + ", ".join(f"{json.dumps(k)}={json.dumps(v)}"
                                                                       for k, v in fs.items()) + "}"] if fs else []
@@ -415,8 +422,13 @@ def claude_sandbox(work):
                                        "denyWrite": [CODE, ALSO_DIR]}}}
 
 
+def work_dir(name):
+    """name's scratch dir, which its prompts name: called by its alias, so the path doesn't give the model away."""
+    return os.path.join(WS, "work", aliases()[name])
+
+
 def can_shell(name):
-    return name != "claude" or claude_sandbox(os.path.join(WS, "work", "claude")) is not None
+    return family(name) != "claude" or claude_sandbox(work_dir(name)) is not None
 
 
 def agent_env(name):
@@ -424,8 +436,8 @@ def agent_env(name):
     variables that tie a nested Claude Code to the session that started agora."""
     drop = {"OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY"}
     env = {k: v for k, v in os.environ.items()
-           if k not in drop and not (name == "claude" and (k.startswith("CLAUDE_CODE_") or k in ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT")))}
-    if name == "codex":
+           if k not in drop and not (family(name) == "claude" and (k.startswith("CLAUDE_CODE_") or k in ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT")))}
+    if family(name) == "codex":
         env["CODEX_HOME"] = os.path.join(INSTALL, ".codex-home")
     return env
 
@@ -439,15 +451,16 @@ def invoke(name, sid, prompt, work, log, timeout):
     cmd, on_stdin = agent_cmd(name, sid, work, out)
     if not on_stdin:
         cmd.append("-p=" + prompt)
-    elif name == "gemini":   # agy reads stream-json events on stdin
+    elif family(name) == "gemini":   # agy reads stream-json events on stdin
         prompt = json.dumps({"event": "user", "message": {"role": "user", "content": prompt}}) + "\n"
-    handler = {"codex": codex_event, "gemini": agy_event, "claude": claude_event}[name]
+    handler = {"codex": codex_event, "gemini": agy_event, "claude": claude_event}[family(name)]
     r = stream(name, cmd, prompt if on_stdin else None, work, agent_env(name), log, timeout,
                lambda n, e: handler(n, e, res))
-    text = (open(out).read() if name == "codex" and os.path.exists(out) else res.get("text") or "").strip()
-    if name != "codex":
+    codex = family(name) == "codex"
+    text = (open(out).read() if codex and os.path.exists(out) else res.get("text") or "").strip()
+    if not codex:
         log.write(text + "\n")
-    if name == "codex" and res.get("sid"):
+    if codex and res.get("sid"):
         res["tokens"] = codex_context(res["sid"])
     return r, text, res
 
@@ -473,28 +486,33 @@ def _run_agent(name, timeout=1800, do_sync=True):
     if do_sync:
         sync()
     msgs = load()
-    thread = "".join(fmt(m) for m in msgs)
+    me = aliases()[name]   # what the agents call this seat: the models never see the seat names or models
+    work = work_dir(name)
+    os.makedirs(work, exist_ok=True)
+    full = enc("".join(fmt(m) for m in msgs))
+    thread = full
     if len(thread) > 200_000:
-        thread = "[earlier messages truncated; full thread in " + MD + "]\n\n" + thread[-200_000:]
+        with open(os.path.join(work, "THREAD_FULL.md"), "w") as f:
+            f.write("# Thread (all of it)\n\n" + full)
+        thread = "[earlier messages truncated; full thread in " + os.path.join(work, "THREAD_FULL.md") + "]\n\n" \
+            + thread[-200_000:]
     new_msgs = [m for m in msgs if for_me(m, name) and m["id"] > seen(name)]
     new = [m["id"] for m in new_msgs]
     note = turn_note(new_msgs)
     asked = [q for q in open_rounds() if q in new]   # independent rounds this turn answers
-    work = os.path.join(WS, "work", name)
-    os.makedirs(work, exist_ok=True)
     with open(os.path.join(work, "THREAD.md"), "w") as f:   # decisions first: they survive the truncation
-        f.write("# Thread so far\n\n" + decisions_text(msgs) + thread)
+        f.write("# Thread so far\n\n" + enc(decisions_text(msgs)) + thread)
     proto = protocol()
     extra = web_block(name, work)
-    phash = __import__("hashlib").sha1((proto + rules(name) + extra).encode()).hexdigest()[:12]   # a changed web setting starts fresh sessions
+    phash = __import__("hashlib").sha1((proto + rules(me) + extra).encode()).hexdigest()[:12]   # a changed web setting starts fresh sessions
     head, head_line = snapshot_head()
-    fresh_prompt = (proto + f"\n\n# You are: {name}\n\nThe codebase is at {CODE} (read-only). " + also_note() + "The full thread is in "
+    fresh_prompt = (proto + f"\n\n# You are: {me}\n\nThe codebase is at {CODE} (read-only). " + also_note() + "The full thread is in "
                     f"{work}/THREAD.md: read it first. Reply to the new message(s) addressed to you: {new}. "
                     "Only read files under the codebase" + (", the extra snapshots" if ALSO else "") + " and that thread file. "
                     + ("You can run read-only shell commands there (git log/show/blame, grep, tests"
-                       + ("" if name == "codex" and web_shell() else " that don't need the network") + "). "
+                       + ("" if family(name) == "codex" and web_shell() else " that don't need the network") + "). "
                        if can_shell(name) else "")
-                    + extra + rules(name)
+                    + extra + rules(me)
                     + note)
     log = open(os.path.join(STATE, name + ".log"), "a")
     stopped(name)   # a stop mark left from a turn that had already ended
@@ -516,10 +534,10 @@ def _run_agent(name, timeout=1800, do_sync=True):
             s, prompt = None, fresh_prompt
         else:
             unseen = [m for m in msgs if m["id"] > s.get("upto", 0) and m["from"] != name]
-            prompt = ("# New in the thread since your last turn\n\n" + ("".join(fmt(m) for m in unseen) or "(nothing)\n")
+            prompt = ("# New in the thread since your last turn\n\n" + (enc("".join(fmt(m) for m in unseen)) or "(nothing)\n")
                       + (f"\nThe code snapshot at {CODE} changed since your last turn (HEAD {head_line}); re-read files you rely on. " + also_note() + "\n"
                          if head != s.get("head") else "")
-                      + f"\nReply to the message(s) addressed to you: {new}. Same rules as before: " + rules(name) + note)
+                      + f"\nReply to the message(s) addressed to you: {new}. Same rules as before: " + rules(me) + note)
         log.write(f"\n=== {time.ctime()} replying to {new}: " + (f"fresh session ({why})" if why else
                   f"resuming {s['id']} (turn {s.get('turns', 0) + 1})") + "\n")
         log.flush()
@@ -545,20 +563,21 @@ def _run_agent(name, timeout=1800, do_sync=True):
             f"not retried: fix it (e.g. log {name} in), then post again" if fatal_error(err) else f"try {f['tries']}/{MAX_TRIES}"))
         print(f"{name} failed (rc {r.returncode}){err}; see {os.path.join(STATE, name + '.log')}", file=sys.stderr)
         return None
+    text = dec(text)   # aliases back to seat names: the thread and the user see the real ones
     last = next((m for m in reversed(msgs) if m["from"] != name), None)   # never default to addressing itself
     to, zz, wf, re_ = last["from"] if last else "all", False, [], list(new)
     for _ in range(4):  # directive lines: TO: ..., RE: ..., SLEEP, WAIT: name, in any order
         first, _, rest = text.strip().partition("\n")
         d = first.strip().strip("`*")
         if d.upper().startswith("TO:"):
-            to, text = d[3:].strip(), rest
+            to, text = ",".join(dec_name(x) for x in d[3:].split(",") if x.strip()), rest
         elif d.rstrip(".").upper() == "SLEEP":
             zz, text = True, rest
         elif d.upper().startswith("RE:"):
             ids = [int(x) for x in re.findall(r"\d+", d[3:]) if 0 < int(x) <= len(msgs)]
             re_, text = ids or re_, rest
         elif d.upper().startswith("WAIT:"):
-            wf = [x.strip().lower() for x in d[5:].split(",") if x.strip().lower() in NAMES and x.strip().lower() != name]
+            wf = [dec_name(x) for x in d[5:].split(",") if dec_name(x) in NAMES and dec_name(x) != name]
             zz, text = True, rest
     sleep_set(name, False)
     extra = None

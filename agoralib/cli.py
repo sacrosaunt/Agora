@@ -1,6 +1,7 @@
 """agora: a tiny shared discussion thread for several coding agents reading one codebase.
 
-Participants: user, claude, codex, gemini (Antigravity). Messages live in thread.jsonl (source of truth) and are
+Participants: user and the seats: claude, codex, gemini (Antigravity), plus any extra "seats" (more models of a
+family). Messages live in thread.jsonl (source of truth) and are
 rendered to thread.md. Everyone reads the code from a read-only snapshot (code/) of the source folder: for a git
 repo its tracked + untracked-not-ignored files plus its history, for a plain folder the files no .gitignore
 excludes; never secrets-like files (.env*, *.pem, *.key, id_rsa*, *credentials*, ...).
@@ -31,6 +32,11 @@ workspace's own agora.json overrides them and alone holds src-related keys (excl
   max_turns, max_tokens   session rotation limits (defaults 40 turns, 300000 context tokens)
   claude_model, claude_effort, codex_model, codex_effort, gemini_model   per-agent model and reasoning effort
            (default: each CLI's own default; codex effort medium); env AGORA_CLAUDE_MODEL etc. override
+  seats    more models of one family side by side: {"claude-sonnet": {"family": "claude", "model": "sonnet",
+           "effort": "high"}}; each is an agent of its own (serve, @mentions, add/remove); without its own effort
+           it takes its family's. `agora setup --models` adds them
+  anonymize  the agents see each other (and themselves) under random per-workspace aliases, never the seat names,
+           CLIs or models; you see the real names (default true; env AGORA_ANONYMIZE=0 turns it off)
 
 Each headless agent keeps one persistent CLI session (codex thread / Antigravity conversation / Claude Code
 session, all on the local logins, no API keys) and is resumed with only the messages it hasn't seen. A fresh
@@ -184,7 +190,7 @@ def main():
     p = sp.add_parser("wake"); p.add_argument("-a", "--as", dest="who", required=True)
     p = sp.add_parser("hook", help="Claude Code tool hook (reads hook JSON on stdin)"); p.add_argument("phase", choices=["pre", "post"])
     sp.add_parser("protocol"); p = sp.add_parser("intro", help="the starter prompt for a seat you run by hand")
-    p.add_argument("name", choices=AGENTS)
+    p.add_argument("name", type=dec_name, choices=AGENTS)
     p = sp.add_parser("decide", help="record a decision (shown at the top of the thread; nobody is asked to reply)")
     p.add_argument("--via", metavar="AGENT", help="an agent recording it for the user"); p.add_argument("text", nargs="+")
     sp.add_parser("decisions", help="list the recorded decisions")
@@ -214,6 +220,14 @@ def main():
     p.add_argument("--only", help="comma list of agents to serve (default: config serve, else all)")
     p.add_argument("--auto", action="store_true", help=argparse.SUPPRESS)   # started by a client: exits when idle
     a = ap.parse_args()
+    # a seat run by hand may name itself and the others by alias (what it reads) or by seat name
+    if getattr(a, "who", None) and a.cmd != "watch":
+        a.who = dec_name(a.who)
+    if getattr(a, "to", None):
+        a.to = ",".join(dec_name(x) for x in a.to.split(",") if x.strip())
+    if getattr(a, "until", None):
+        a.until = ",".join(dec_name(x) for x in a.until.split(",") if x.strip())
+    show = (lambda t: enc(t)) if getattr(a, "who", None) in AGENTS else (lambda t: t)   # what a seat reads: aliases
 
     if a.cmd == "setup":
         return setup(models=a.models)
@@ -272,7 +286,7 @@ def main():
             re_ = [int(x.strip().lstrip("#")) for x in a.re.split(",") if x.strip()] if a.re else []
         except ValueError:
             sys.exit("--re takes message numbers, e.g. --re 12,14")
-        m = post(a.who, a.to, text, mode=a.mode, hold=asked, re_=re_)
+        m = post(a.who, a.to, dec(text) if a.who in AGENTS else text, mode=a.mode, hold=asked, re_=re_)
         if not m.get("held") and any(for_me(m, x) for x in auto()):
             ensure_serve()
         if m.get("held"):
@@ -293,7 +307,7 @@ def main():
                 seen(a.who, msgs[-1]["id"])
         if a.last:
             msgs = msgs[-a.last:]
-        print("\n".join(json.dumps(m, ensure_ascii=False) for m in msgs) if a.json else "\n".join(fmt(m) for m in msgs))
+        print(show("\n".join(json.dumps(m, ensure_ascii=False) for m in msgs) if a.json else "\n".join(fmt(m) for m in msgs)))
     elif a.cmd == "wait":
         t0 = time.time()
         ensure_serve()   # a waiting seat is a client: the serve stays up while it waits
@@ -308,7 +322,7 @@ def main():
                 sleep_set(a.who, False)
                 if a.who != "user":
                     busy(a.who, True, "reading the new messages")
-                print("\n".join(fmt(m) for m in new))
+                print(show("\n".join(fmt(m) for m in new)))
                 return
             if a.timeout and time.time() - t0 > a.timeout:
                 sys.exit(3)
@@ -368,7 +382,8 @@ def main():
         print(protocol())
     elif a.cmd == "intro":
         code, pre = winpath(CODE)
-        print(template("SEAT.md", name=a.name, others=",".join(n for n in AGENTS if n != a.name), code=code,
+        al = aliases()
+        print(template("SEAT.md", name=al[a.name], others=",".join(al[n] for n in AGENTS if n != a.name), code=code,
                        cmd=pre + AGORA))
     elif a.cmd == "decide":
         client()
@@ -440,7 +455,7 @@ def main():
                      if z else ""))
         for n in AGENTS:
             se = session(n)
-            print(f"  {n:8s} " + (f"session {se['id'][:8]}…: {se.get('turns', 0)}/{MAX_TURNS} turns, "
+            print(f"  {seat_label(n)}" + (f" [{aliases()[n]} to the agents]" if ANON else "") + "\n" + " " * 11 + (f"session {se['id'][:8]}…: {se.get('turns', 0)}/{MAX_TURNS} turns, "
                                   f"{se.get('tokens', 0) // 1000}k/{MAX_TOKENS // 1000}k tokens, since {se.get('started')}"
                                   if se else "no session (next turn starts fresh)") + (" [served]" if n in auto() else ""))
 

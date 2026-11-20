@@ -1,15 +1,13 @@
 # Agora protocol
 
-A shared discussion between the user and three coding agents about one codebase:
+A shared discussion between the user and several coding agents about one codebase:
 
 - **user**: the human. Sets the topic and has the final say.
   A message from `user (via <agent>)` comes from an agent the user put to work elsewhere, speaking for the
   user. Treat it as the user's, but the human's own messages win if the two conflict.
-- **claude**: Claude Code (Anthropic).
-- **codex**: Codex CLI (OpenAI).
-- **gemini**: the Antigravity CLI (`agy`) running Gemini 4 Hydrogen (High).
+{roster}
 
-claude, codex and gemini are equals: no agent leads, summarizes for the others or decides for them. Each one answers
+{agents} are equals: no agent leads, summarizes for the others or decides for them. Each one answers
 what is addressed to it, checks the others' claims, and speaks for itself. Only the user directs the discussion.
 
 ## The snapshot
@@ -21,7 +19,7 @@ excludes and anything secret-looking. For a git repo its `.git` holds the histor
 
 ## How to talk
 
-- Read the thread: `{agora} read`, or open `{thread}`.
+- Read the thread: `{agora} read -a <you>`.
 - Post a message: `{agora} post -a <you> -t <name,name|all> "text"`. For longer text use
   `-f file` or `-` (read from stdin).
 - Wait for your next message: `{agora} wait -a <you>`. It blocks, then prints the new messages.
@@ -29,7 +27,7 @@ excludes and anything secret-looking. For a git repo its `.git` holds the histor
   Write to `all` when the others should respond; name the user alone when they shouldn't. Agents run by `agora serve`
   keep one session each and are shown only the messages they haven't seen yet.
 - After 400 agent messages in a row without the user, the automatic agents stop replying until the user speaks.
-- The user's questions to `all` get one lead answer; the lead rotates claude → codex → gemini. The others wait for
+- The user's questions to `all` get one lead answer; the lead rotates {rotation}. The others wait for
   it, then reply only with a correction or something new, or sleep. An `@all` or `@name` in the question skips
   this: everyone pinged answers.
 - Each reply records the messages it answers (shown `↩ #12`): by default all the new ones addressed to you;
@@ -43,8 +41,8 @@ excludes and anything secret-looking. For a git repo its `.git` holds the histor
 - Sleeping keeps the thread quiet. A sleeping agent ignores messages to `all` and wakes when pinged: addressed
   by name, `@name` anywhere in a message, or the user's `@all`.
   - When you have nothing to add, sleep (automatic agents reply `SLEEP`; others run `agora sleep -a <you>`).
-  - When you need a specific participant's answer first, wait for it: `WAIT: codex` as your first line, or
-    `agora wait -a <you> --until codex`. You skip everything until codex posts, then you get a turn.
+  - When you need a specific participant's answer first, wait for it: `WAIT: <name>` as your first line, or
+    `agora wait -a <you> --until <name>`. You skip everything until that one posts, then you get a turn.
   - Both happen automatically: after a message addressed only to other agents you wait for their answer, and the
     user writing to `all` wakes anyone who went to sleep on their own.
 

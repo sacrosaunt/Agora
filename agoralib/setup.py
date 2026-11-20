@@ -244,9 +244,9 @@ def setup(models=False):
     """Interactive review: what to leave out of the snapshot, which agents answer, web search; models and efforts
     only when asked for (models=True, or yes to Customize). Settings go to this workspace, and to the install's
     defaults for new workspaces when you say so."""
-    found = [n for n in AGENTS if shutil.which({"claude": CLAUDE, "codex": "codex", "gemini": AGY}[n])]
+    found = [n for n in AGENTS if shutil.which({"claude": CLAUDE, "codex": "codex", "gemini": AGY}[family(n)])]
     home = os.path.join(INSTALL, ".codex-home")   # agora's own Codex home: your ~/.codex stays untouched
-    login = "codex" in found and shutil.which("codex") and not os.path.exists(os.path.join(home, "auth.json"))
+    login = any(family(n) == "codex" for n in found) and shutil.which("codex") and not os.path.exists(os.path.join(home, "auth.json"))
     names = (["Snapshot"] if SRC else []) + ["Agents", "Models", "Web access", "Browser"] + (
         [] if WS == INSTALL else ["Defaults"]) + (["Codex login"] if login else [])
     with Steps(f"Setting up agora for {SRC or 'a discussion without code'}", names) as st:
@@ -273,17 +273,50 @@ def setup(models=False):
             st.skip("Models")
         if inst["serve"] and (models or ask("Customize models and effort (Enter keeps each CLI's default)? [y/N]",
                                             "n").lower().startswith("y")):
-            got = []
-            for n in inst["serve"]:
+            got, seats, listed = [], {k: dict(v) for k, v in (CFG.get("seats") or {}).items()}, {}
+            def models_of(fam):
+                if fam not in listed:
+                    listed[fam] = cli_models(fam)
+                return listed[fam]
+            def choose_model(n, fam):
+                """Model and effort for seat n; a family's own seat keeps them at top level, extra seats in seats{}."""
                 st.show("Models")
-                ms, efforts = cli_models(n)
+                ms, efforts = models_of(fam)
                 cm = opt(n, "model") or ""
-                inst[f"{n}_model"] = pick(f"{n} model", ms, cm) if ms else ask(f"\n{n} model (Enter: CLI default):", cm)
-                effs = efforts.get(inst[f"{n}_model"]) or efforts.get("*")
-                if effs:
-                    inst[f"{n}_effort"] = pick(f"{n} effort", [(e, "") for e in effs], opt(n, "effort") or "")
-                got.append(f"{n} " + (" ".join(x for x in (inst[f"{n}_model"], inst.get(f"{n}_effort")) if x)
-                                      or "default"))
+                m = pick(f"{n} model", ms, cm) if ms else ask(f"\n{n} model (Enter: CLI default):", cm)
+                effs = efforts.get(m) or efforts.get("*")
+                e = pick(f"{n} effort", [(x, "") for x in effs], opt(n, "effort") or "") if effs else None
+                if n in FAMILIES:
+                    inst[f"{n}_model"] = m
+                    if e is not None:
+                        inst[f"{n}_effort"] = e
+                else:
+                    seats.setdefault(n, {"family": fam}).update({"model": m or None, **({"effort": e} if e else {})})
+                got.append(f"{n} " + (" ".join(x for x in (m, e) if x) or "default"))
+            for n in inst["serve"]:
+                choose_model(n, family(n))
+            fams = [f for f in FAMILIES if shutil.which({"claude": CLAUDE, "codex": "codex", "gemini": AGY}[f])]
+            while fams and ask("\nAdd another model of a family as its own agent (e.g. a second Claude)? [y/N]",
+                               "n").lower().startswith("y"):
+                fam = ask(f"Family ({'/'.join(fams)}):", fams[0]).strip().lower()
+                if fam not in fams:
+                    print(f"  not one of: {', '.join(fams)}")
+                    continue
+                ms, _ = models_of(fam)
+                m = pick(f"{fam} model", ms, "") if ms else ask(f"\n{fam} model:", "")
+                slug = re.sub(r"[^a-z0-9.-]+", "-", f"{fam}-{m}".lower()).strip(".-")[:32] if m else ""
+                name = ask(f"Name it (how you @mention it) [{slug}]:", slug).strip().lower()
+                bad = seat_name_error(name, set(AGENTS) | set(seats))
+                if bad:
+                    print(f"  {bad}")
+                    continue
+                seats[name] = {"family": fam, "model": m or None}
+                SEATS[name] = {k: v for k, v in seats[name].items() if v}   # known for the rest of setup
+                choose_model(name, fam) if (models_of(fam)[1].get(m) or models_of(fam)[1].get("*")) else \
+                    got.append(f"{name} {m or 'default'}")
+                inst["serve"].append(name)
+            if seats or CFG.get("seats"):
+                inst["seats"] = seats
             st.record("; ".join(got))
         elif inst["serve"]:
             st.record("each CLI's default" if not any(opt(n, "model") for n in inst["serve"]) else "unchanged")
@@ -302,10 +335,10 @@ def setup(models=False):
         b = find_browser()
         if b:
             on = _on(CFG.get("browser", "auto"))
-            who = [n for n in inst["serve"] if n != "codex"]
+            who = [n for n in inst["serve"] if family(n) != "codex"]
             rows = ([f"  {', '.join(n.capitalize() for n in who):<16} local files"] if who else []) + (
                 ["  Codex            " + ("local files and your running app" if r == "3"
-                                          else "can't: needs option 3 in Web access")] if "codex" in inst["serve"] else [])
+                                          else "can't: needs option 3 in Web access")] if any(family(n) == "codex" for n in inst["serve"]) else [])
             print("Let the agents open pages in a headless browser, to check what a page actually shows?\n\n"
                   + "\n".join(rows) + f"\n\n  using {b}\n")
             inst["browser"] = "auto" if ask(f"[{'Y/n' if on else 'y/N'}]",
@@ -333,7 +366,7 @@ def setup(models=False):
                 save_cfg(CONFIG, inst)
                 where_to = f"saved for this workspace only ({CONFIG})"
                 st.record("this workspace only")
-        login = login and "codex" in inst["serve"]
+        login = login and any(family(n) == "codex" for n in inst["serve"])
         if login:
             st.show("Codex login")
             login = ask("Codex isn't logged in for agora yet (it keeps its own Codex home). Log in now? [Y/n]",
@@ -344,7 +377,7 @@ def setup(models=False):
     if login:   # on the normal screen: codex prints a URL to open
         os.makedirs(home, exist_ok=True)
         subprocess.run([shutil.which("codex"), "login"], env={**os.environ, "CODEX_HOME": home})
-    if "codex" in inst["serve"] and not os.path.exists(os.path.join(home, "auth.json")):
+    if any(family(n) == "codex" for n in inst["serve"]) and not os.path.exists(os.path.join(home, "auth.json")):
         print(f"\nLog Codex in later: `agora setup` again, or CODEX_HOME={home} codex login")
     print(f"\nSettings {where_to}. `agora` joins the chat; `agora setup --models` picks models and efforts.")
     try:

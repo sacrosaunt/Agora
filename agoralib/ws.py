@@ -10,8 +10,8 @@ SCRIPT = os.path.join(INSTALL, "agora")   # the launcher
 SELF = [sys.executable] + (["-X", "utf8"] if WINDOWS else []) + [SCRIPT]
 COMMAND = os.path.join(INSTALL, "agora.cmd") if WINDOWS else SCRIPT   # what a shell (or an agent) runs
 VENV = os.path.join(INSTALL, ".venv")  # optional: python -m venv .venv && .venv/bin/pip install -r requirements.txt
-NAMES = ("user", "claude", "codex", "gemini")
-AGENTS = ("claude", "codex", "gemini")
+FAMILIES = ("claude", "codex", "gemini")   # the CLIs; each serves one seat named after it, plus any "seats" in the config
+NAMES, AGENTS = ("user",) + FAMILIES, FAMILIES   # set from the config's seats once it is loaded (below)
 WS_KEYS = ("src", "exclude", "project", "also", "history")   # workspace-only config: never inherited from the install
 DATA = os.path.realpath(os.path.expanduser(os.environ.get("AGORA_DATA") or os.path.join(
     (os.environ.get("LOCALAPPDATA") if WINDOWS else os.environ.get("XDG_DATA_HOME"))
@@ -203,6 +203,114 @@ def also_note():
     """Prompt text naming the extra read-only snapshots, or ''."""
     return ("Also readable (read-only snapshots): " + ", ".join(f"{k} at {os.path.join(ALSO_DIR, k)}" for k in ALSO)
             + ". ") if ALSO else ""
+RESERVED = {"user", "all", "via", "chat", "post", "read", "wait", "watch", "skill", "idle", "doing", "sleep", "wake",
+            "hook", "protocol", "intro", "decide", "decisions", "sync", "status", "update", "setup", "where", "ls",
+            "move", "add", "remove", "stop", "restart", "reveal", "reset", "new", "serve"}
+
+
+ALIAS_POOL = ("arlo", "bexa", "cyra", "dovin", "elko", "fenn", "gilo", "hask", "ivra", "jorn", "kael", "lunt",
+              "mirel", "nesk", "orvo", "pell", "quorin", "rusk", "sorel", "tavi", "ulmo", "vesk", "wren", "yarro")
+
+
+def seat_name_error(n, taken=()):
+    """Why n can't name a seat ("" when it can)."""
+    if not re.fullmatch(r"[a-z][a-z0-9.-]{0,31}", n or "") or n.endswith((".", "-")):
+        return "a seat name is 1-32 of a-z, 0-9, . and -, starting with a letter"
+    if n in RESERVED or n in ALIAS_POOL or n in FAMILIES:
+        return f"{n!r} is taken (a command, family or alias name)"
+    return f"{n!r} is already a seat" if n in taken else ""
+
+
+def load_seats(cfg):
+    """{seat: {"family", "model"?, "effort"?}}: one seat per family (named after it), then the config's "seats":
+    {"claude-sonnet": {"family": "claude", "model": "sonnet"}, ...}, several models of one family side by side.
+    A malformed seat is left out with a warning."""
+    out = {f: {"family": f} for f in FAMILIES}
+    for n, v in (cfg.get("seats") or {}).items():
+        n = str(n).lower()
+        fam = (v or {}).get("family") if isinstance(v, dict) else None
+        bad = seat_name_error(n) or ("" if fam in FAMILIES else f"family must be one of {', '.join(FAMILIES)}")
+        if bad:
+            print(f"agora: ignoring seat {n!r}: {bad}", file=sys.stderr)
+            continue
+        out[n] = {k: v[k] for k in ("family", "model", "effort") if v.get(k)}
+    return out
+
+
+SEATS = load_seats(CFG)
+AGENTS = tuple(SEATS)
+NAMES = ("user",) + AGENTS
+
+
+def family(name):
+    """The CLI behind a seat: claude, codex or gemini."""
+    return SEATS.get(name, {}).get("family", name)
+
+
+ANON = str(os.environ.get("AGORA_ANONYMIZE", CFG.get("anonymize", True))).lower() not in ("false", "0", "no", "off")
+ALIASES = os.path.join(STATE, "aliases.json")   # {seat: alias}: what the agents call each other in this workspace
+
+
+def aliases():
+    """{seat: alias} for every seat (an identity map when anonymize is off). Assigned at random the first time a
+    seat is seen and kept for the workspace, so sessions see stable names that say nothing about the models."""
+    if not ANON:
+        return {n: n for n in AGENTS}
+    have = _json(ALIASES)
+    if all(n in have for n in AGENTS):
+        return {n: have[n] for n in AGENTS}
+    os.makedirs(STATE, exist_ok=True)
+    with open(ALIASES + ".lock", "a") as lk:
+        lock(lk)
+        have = _json(ALIASES)
+        import random
+        free = [a for a in ALIAS_POOL if a not in have.values() and a not in SEATS]
+        random.SystemRandom().shuffle(free)
+        for n in AGENTS:
+            if n not in have:
+                have[n] = free.pop() if free else f"agent{len(have) + 1}"
+        with open(tmpname(ALIASES), "w") as f:
+            json.dump(have, f)
+        replace(tmpname(ALIASES), ALIASES)
+    return {n: have[n] for n in AGENTS}
+
+
+def _names_re(names):
+    """A whole participant name: not inside an identifier, path or longer seat name (claude vs claude-sonnet,
+    .claude/, claude_x); longest first."""
+    alt = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+    return re.compile(r"(?<![\w./-])(" + alt + r")(?![\w/]|[.-]\w)", re.I)
+
+
+def enc(text):
+    """Text for the models: every seat name becomes its alias (the thread keeps the real names)."""
+    al = aliases()
+    if not ANON or not text:
+        return text
+    return _names_re(al).sub(lambda g: al[g.group(1).lower()], text)
+
+
+def dec(text):
+    """Text from the models: aliases back to the seat names."""
+    back = {a: n for n, a in aliases().items()}
+    if not ANON or not text:
+        return text
+    return _names_re(back).sub(lambda g: back[g.group(1).lower()], text)
+
+
+def dec_name(n):
+    """A participant name as given by anyone (seat name or alias) as the seat name; others unchanged."""
+    n = (n or "").strip().lstrip("@").lower()
+    return {a: s for s, a in aliases().items()}.get(n, n)
+
+
+def seat_label(name):
+    """A seat for people: its name, and its model when set (the agents never see this)."""
+    m = os.environ.get(f"AGORA_{name.upper().replace('-', '_').replace('.', '_')}_MODEL") or SEATS.get(name, {}).get(
+        "model") or CFG.get(f"{name}_model")
+    return f"{name} ({m})" if m else name
+
+
 CLAUDE = os.path.expanduser(os.environ.get("AGORA_CLAUDE") or CFG.get("claude") or shutil.which("claude")
                             or "~/.local/bin/claude")
 MAX_TURNS, MAX_TOKENS = int(CFG.get("max_turns", 40)), int(CFG.get("max_tokens", 300_000))
@@ -237,11 +345,27 @@ def template(fname, **kw):
     return s
 
 
+DESCRIBE = {"claude": "Claude Code (Anthropic)", "codex": "Codex CLI (OpenAI)",
+            "gemini": "the Antigravity CLI (`agy`)"}
+
+
 def protocol():
-    s = template("PROTOCOL.md", agora=AGORA, code=CODE, thread=MD)
+    """The protocol for the agents. Anonymized (the default): the agents appear under their aliases, with
+    nothing about the CLI or model behind each one, so they weigh claims by evidence, not by who made them."""
+    al = aliases()
+    names = [al[n] for n in AGENTS]
+    if ANON:
+        roster = ("- " + ", ".join(f"**{x}**" for x in names) + ": the coding agents. Which model is behind each "
+                  "name is not disclosed; don't guess at it, and judge every claim by its evidence alone.")
+    else:
+        roster = "\n".join(f"- **{n}**: {DESCRIBE[family(n)]}" + (f", model {SEATS[n]['model']}"
+                            if SEATS[n].get("model") else "") + "." for n in AGENTS)
+    s = template("PROTOCOL.md", agora=AGORA, code=CODE, roster=roster,
+                 agents=", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else names[0],
+                 rotation=" → ".join(names))
     if os.path.exists(PROJECT):
         with open(PROJECT) as f:
-            s = s.rstrip() + "\n\n" + f.read()
+            s = s.rstrip() + "\n\n" + enc(f.read())
     return s
 
 def auto():

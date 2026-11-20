@@ -210,6 +210,8 @@ overrides them and alone holds the project keys `exclude`, `project`, `also` and
 | `claude_model`, `claude_effort` | Claude Code model and effort                               | CLI default        |
 | `codex_model`, `codex_effort` | Codex model and reasoning effort                             | CLI default, `medium` |
 | `gemini_model`   | Antigravity model                                                      | `gemini-4-hydrogen-high` |
+| `seats`          | more models of one family as agents of their own, e.g. `{"claude-sonnet": {"family": "claude", "model": "sonnet", "effort": "high"}}`; `agora setup --models` adds them | none |
+| `anonymize`      | agents see each other (and themselves) under random per-workspace aliases, never seat names, CLIs or models; the thread, chat and thread.md show real names | `true` |
 | `agy`, `claude` | CLI binaries                                                            | found on `PATH`    |
 
 Environment overrides: `AGORA_DATA` (where workspaces live), `AGORA_SRC`, `AGORA_EXCLUDE` (comma-separated), `AGORA_AUTOSERVE=0`, and `AGORA_<AGENT>_<KEY>` for the

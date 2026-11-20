@@ -362,7 +362,7 @@ def chat(to="all", after=None):
         cmd = re.match(r"/(?:" + "|".join(SLASH) + r")(?=\s|$)", buf) if tty else None
         if cmd:
             return "\033[1m" + cmd.group(0) + "\033[22m" + pings(buf[cmd.end():])
-        lead = re.match(r"@[\w,]+", buf) if tty else None
+        lead = re.match(r"@[\w,.-]+", buf) if tty else None
         if not lead:
             return pings(buf)
         names = lead.group(0)[1:].split(",")
@@ -422,7 +422,8 @@ def chat(to="all", after=None):
         def hl(g):
             c = COLORS.get(g.group(1).lower(), "37").removeprefix("1;")
             return f"\033[1;{c}m{g.group(0)}\033[22;39m"
-        return re.sub(r"(?<![\w@])@(" + "|".join(only or NAMES + ("all",)) + r")\b", hl, out, flags=re.I)
+        return re.sub(r"(?<![\w@])@(" + "|".join(map(re.escape, sorted(only or NAMES + ("all",), key=len, reverse=True)))
+                      + r")(?![\w-])", hl, out, flags=re.I)
 
     def cites(out):
         """Inline #N references to messages in the thread: bold, in the cited author's colour."""
@@ -662,7 +663,7 @@ def chat(to="all", after=None):
                 zz = state.get("zz") or {}
                 def note(n):
                     if add:
-                        b = {"claude": CLAUDE, "codex": "codex", "gemini": AGY}[n]
+                        b = {"claude": CLAUDE, "codex": "codex", "gemini": AGY}[family(n)]
                         return "" if shutil.which(b) else "its CLI isn't installed here"
                     return ("working now; finishes this turn" if n in state["busy"] else "asleep" if n in zz else "")
                 with lock:
