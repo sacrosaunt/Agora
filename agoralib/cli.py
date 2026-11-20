@@ -23,6 +23,8 @@ workspace's own agora.json overrides them and alone holds src-related keys (excl
   history  put the git history (.git) into the snapshots (default true)
   max_files, max_mb, max_file_mb   snapshot limits (20000 files, 500 MB; files over 20 MB are skipped): over a
            limit the snapshot isn't refreshed
+  default_mode  how a user question to several agents is answered when no mode is given: independent (default;
+           everyone answers blind, then cross-checks) or short (one lead answer, the others add only what's missing)
   independent_timeout   seconds before an independent round is revealed with whoever answered (default 1200)
   serve    agents the serve loop runs headlessly (default: all three; drop one whose seat a person runs)
   clock    "12h" or "24h" (default): how the chat shows times; /clock in the chat switches and saves it
@@ -156,7 +158,8 @@ def main():
     p.add_argument("--timeout", type=float, default=1800, help="with --via: give up after this many seconds")
     p.add_argument("-t", "--to", default="all"); p.add_argument("-f", "--file"); p.add_argument("text", nargs="*")
     p.add_argument("-q", "--no-follow", action="store_true", help="just post; don't open the live chat")
-    p.add_argument("--mode", choices=MODES, help="reply shape: short (default), audit or design (longer, structured "
+    p.add_argument("--mode", choices=MODES, help="reply shape: independent (default for a question to several "
+                   "agents; short for one), short (one lead answer), audit or design (longer, structured "
                    "findings), independent (every agent answers blind; the answers are revealed together, then "
                    "cross-checked)")
     p.add_argument("--independent", dest="mode", action="store_const", const="independent", help="= --mode independent")

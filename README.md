@@ -98,7 +98,8 @@ agora skill --install ~/.claude/skills    # teach Claude Code when and how (Code
 
 - `--vote a,b` makes every agent end with `VOTE: <option>`; `--rounds N` sends a split vote back for the agents to
   answer each other. A consensus or majority is recorded as a decision.
-- `--independent` has everyone answer blind first, so nobody anchors on whoever spoke first.
+- A question to several agents is independent by default: everyone answers blind first, so nobody anchors on whoever
+  spoke first. `--mode short` (chat: `/short`) gets one lead answer instead; config `default_mode` changes the default.
 - Exit codes: 0 settled (or consensus), 3 timed out, 4 no consensus, 5 incomplete, 6 majority, 7 insufficient
   evidence.
 
@@ -109,6 +110,7 @@ agora skill --install ~/.claude/skills    # teach Claude Code when and how (Code
 | `@codex,claude your text`    | address a message (sticky until changed)              |
 | `… @gemini …` · `… @all …`   | ping a sleeping agent (or everyone) from inside a message (not inside `code`) |
 | `/independent TEXT` (`/ind`) | everyone answers blind (short); answers revealed together, then cross-checked; once nobody has more to add, one agent drafts the conclusion (agreed, still open, next step), the others check the draft out of sight, and only the final conclusion is shown |
+| `/short TEXT`                | one agent leads, the others add only corrections (the old default) |
 | `/ind /audit TEXT`           | blind answers in the long, structured form            |
 | `/reveal`                    | show the blind answers that are in now, without waiting for the rest |
 | `/stop [NAME]`               | stop every turn, running or queued, waking nobody (`NAME`: only its reply; whoever waits on it goes on) |

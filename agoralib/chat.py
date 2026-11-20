@@ -36,9 +36,11 @@ def clip(s, width):
 
 
 HELP = """Who answers
-  TEXT                      (to all) one agent leads, in turns; the others add only corrections
+  TEXT                      (to several agents) everyone answers blind; the answers are shown together, then
+                            cross-checked (default_mode "short" in agora.json makes TEXT a /short question)
+  /short TEXT               one agent leads, in turns; the others add only corrections
   @all TEXT                 everyone answers at once, each seeing the replies already in
-  /ind TEXT                 everyone answers blind; the answers are shown together, then cross-checked
+  /ind TEXT                 blind answers, whatever default_mode says
                             (/ind /audit TEXT: long answers; /reveal: show the answers in so far now)
   @name,name TEXT           only them, and later lines too (/to all switches back)
   @name inside a message    pings that agent (wakes it if asleep); not inside `code`
@@ -295,7 +297,7 @@ def chat(to="all", after=None):
             write_then_prompt(out, buf)   # the prompt only while input() waits (else input() draws it)
             sys.stdout.flush()
 
-    SLASH = ("help", "independent", "ind", "audit", "design", "decide", "decisions", "sleep", "wake", "to", "last", "all",
+    SLASH = ("help", "independent", "ind", "short", "audit", "design", "decide", "decisions", "sleep", "wake", "to", "last", "all",
              "status", "clock", "add", "remove", "kick", "stop", "restart", "update", "reveal", "quit", "q", "exit")   # the commands the input loop below accepts
 
     def recips(s):
@@ -762,7 +764,7 @@ def chat(to="all", after=None):
         if line is None:
             continue
         mode, shape = None, None
-        mm = re.match(r"/(independent|ind|audit|design|decide)\b\s*(.*)", line, re.S)
+        mm = re.match(r"/(independent|ind|short|audit|design|decide)\b\s*(.*)", line, re.S)
         if line.startswith("//"):   # posted as text, one slash
             line = line[1:]
         elif not mm and not addressed and re.match(r"/[A-Za-z]+(\s|$)", line):   # an unknown /word (a path like /src/x isn't one)

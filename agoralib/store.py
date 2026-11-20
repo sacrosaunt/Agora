@@ -89,6 +89,9 @@ def post(frm, to, text, via=None, mode=None, extra=None, hold=(), re_=()):
         sys.exit("empty message")
     if mode and mode not in MODES:
         sys.exit(f"unknown mode {mode!r}; use one of {MODES}")
+    if mode is None and frm == "user" and not via and len(round_members() if "all" in to else
+                                                         [n for n in AGENTS if n in to or mentioned(text, n)]) > 1:
+        mode = CFG.get("default_mode", "independent")   # a question to several agents: answered blind by default
     hold = [q for q in hold if frm in AGENTS and q in open_rounds()
             and not os.path.exists(os.path.join(INDEP, str(q), frm + ".json"))]
     if hold:
